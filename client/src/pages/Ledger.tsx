@@ -1,8 +1,20 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useFinanceStore } from "@/store/financeStore";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import * as Icons from "lucide-react";
 import Papa from "papaparse";
+
+type ColumnMapping = {
+  date?: string;
+  description?: string;
+  amount?: string;
+  debit?: string;
+  credit?: string;
+  type?: string;
+  balance?: string;
+  reference?: string;
+  notes?: string;
+};
 
 export function Ledger() {
   const { transactions, categories, cards, deleteTransaction, importTransactions, updateTransaction } = useFinanceStore();
@@ -10,8 +22,17 @@ export function Ledger() {
   const [filterType, setFilterType] = useState<string>("all");
   
   // Modal states
-  const [isImporting, setIsImporting] = useState(false);
   const [editingTx, setEditingTx] = useState<any>(null);
+  
+  // Advanced Import Wizard State
+  const [isImportWizardOpen, setIsImportWizardOpen] = useState(false);
+  const [importStep, setImportStep] = useState<"upload" | "mapping" | "preview">("upload");
+  const [importData, setImportData] = useState<any[]>([]);
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<ColumnMapping>({});
+  const [amountMode, setAmountMode] = useState<"single" | "dual">("single");
+  const [dateMode, setDateMode] = useState<"DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD" | "auto">("auto");
+  const [selectedCardId, setSelectedCardId] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -30,39 +51,124 @@ export function Ledger() {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        // Basic mapping for generic bank CSVs
-        const imported = results.data.map((row: any) => {
-          // Attempt to find common column names
-          const dateCol = Object.keys(row).find(k => k.toLowerCase().includes('date')) || '';
-          const descCol = Object.keys(row).find(k => k.toLowerCase().includes('desc') || k.toLowerCase().includes('detail')) || '';
-          const amountCol = Object.keys(row).find(k => k.toLowerCase().includes('amount') || k.toLowerCase().includes('value')) || '';
+        if (results.data.length > 0) {
+          setImportHeaders(Object.keys(results.data[0] as object));
+          setImportData(results.data);
           
-          let amount = parseFloat(row[amountCol]?.replace(/[^0-9.-]+/g,"")) || 0;
+          // Auto-guess mapping
+          const headers = Object.keys(results.data[0] as object);
+          const guessedMapping: ColumnMapping = {};
           
-          // Heuristic for type
-          const type = amount >= 0 ? 'income' : 'expense';
+          headers.forEach(h => {
+            const hLower = h.toLowerCase();
+            if (hLower.includes('date')) guessedMapping.date = h;
+            else if (hLower.includes('desc') || hLower.includes('detail')) guessedMapping.description = h;
+            else if (hLower.includes('amount') || hLower.includes('value')) guessedMapping.amount = h;
+            else if (hLower.includes('debit')) { guessedMapping.debit = h; setAmountMode("dual"); }
+            else if (hLower.includes('credit')) { guessedMapping.credit = h; setAmountMode("dual"); }
+            else if (hLower.includes('balance')) guessedMapping.balance = h;
+          });
           
-          return {
-            date: row[dateCol] || new Date().toISOString().split('T')[0],
-            description: row[descCol] || 'Unknown Transaction',
-            originalDescription: row[descCol] || 'Unknown Transaction',
-            amount: amount,
-            type: type as any,
-            categoryId: 'cat_uncategorized',
-            cardId: null,
-            tag: 'personal' as any,
-            isTransferMatched: false
-          };
-        });
-
-        if (imported.length > 0) {
-          importTransactions(imported);
+          setMapping(guessedMapping);
+          setImportStep("mapping");
+          setIsImportWizardOpen(true);
         }
-        setIsImporting(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     });
   };
+
+  const parseDate = (dateStr: string, mode: string) => {
+    if (!dateStr) return new Date().toISOString().split('T')[0];
+    try {
+      // Very basic handling for custom formats, ideally use date-fns here
+      if (mode === "DD/MM/YYYY") {
+        const parts = dateStr.split(/[-/]/);
+        if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      } else if (mode === "MM/DD/YYYY") {
+        const parts = dateStr.split(/[-/]/);
+        if (parts.length === 3) return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+      }
+      // Fallback
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return new Date().toISOString().split('T')[0];
+      return d.toISOString().split('T')[0];
+    } catch {
+      return new Date().toISOString().split('T')[0];
+    }
+  };
+
+  const previewData = useMemo(() => {
+    if (importStep !== "preview") return [];
+    
+    return importData.slice(0, 10).map((row) => {
+      let amount = 0;
+      
+      if (amountMode === "single" && mapping.amount && row[mapping.amount]) {
+        amount = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, "")) || 0;
+      } else if (amountMode === "dual") {
+        const debit = mapping.debit && row[mapping.debit] ? parseFloat(row[mapping.debit].toString().replace(/[^0-9.-]+/g, "")) : 0;
+        const credit = mapping.credit && row[mapping.credit] ? parseFloat(row[mapping.credit].toString().replace(/[^0-9.-]+/g, "")) : 0;
+        amount = credit > 0 ? credit : -Math.abs(debit);
+      }
+      
+      const type = amount >= 0 ? 'income' : 'expense';
+      const desc = mapping.description && row[mapping.description] ? row[mapping.description] : 'Unknown';
+      const dateStr = mapping.date && row[mapping.date] ? row[mapping.date] : '';
+      
+      return {
+        date: parseDate(dateStr, dateMode),
+        description: desc,
+        originalDescription: desc,
+        amount,
+        type,
+        categoryId: 'cat_uncategorized',
+        cardId: selectedCardId || null,
+        tag: 'personal',
+        isTransferMatched: false
+      };
+    });
+  }, [importData, mapping, amountMode, dateMode, importStep, selectedCardId]);
+
+  const handleFinalizeImport = () => {
+    const finalData = importData.map((row) => {
+      let amount = 0;
+      
+      if (amountMode === "single" && mapping.amount && row[mapping.amount]) {
+        amount = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, "")) || 0;
+      } else if (amountMode === "dual") {
+        const debit = mapping.debit && row[mapping.debit] ? parseFloat(row[mapping.debit].toString().replace(/[^0-9.-]+/g, "")) : 0;
+        const credit = mapping.credit && row[mapping.credit] ? parseFloat(row[mapping.credit].toString().replace(/[^0-9.-]+/g, "")) : 0;
+        amount = credit > 0 ? credit : -Math.abs(debit);
+      }
+      
+      const type = amount >= 0 ? 'income' : 'expense';
+      const desc = mapping.description && row[mapping.description] ? row[mapping.description] : 'Unknown';
+      const dateStr = mapping.date && row[mapping.date] ? row[mapping.date] : '';
+      const notes = mapping.notes && row[mapping.notes] ? row[mapping.notes] : undefined;
+      
+      return {
+        date: parseDate(dateStr, dateMode),
+        description: desc,
+        originalDescription: desc,
+        amount,
+        type: type as any,
+        categoryId: 'cat_uncategorized',
+        cardId: selectedCardId || null,
+        tag: 'personal' as any,
+        isTransferMatched: false,
+        notes
+      };
+    });
+
+    importTransactions(finalData);
+    setIsImportWizardOpen(false);
+    setImportStep("upload");
+    setImportData([]);
+    setMapping({});
+  };
+
+  const isMappingValid = mapping.date && mapping.description && (amountMode === "single" ? mapping.amount : (mapping.debit || mapping.credit));
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -77,7 +183,7 @@ export function Ledger() {
             className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors text-sm font-medium"
           >
             <Icons.Upload className="h-4 w-4" />
-            Import CSV
+            Import Wizard
           </button>
           <input 
             type="file" 
@@ -350,6 +456,309 @@ export function Ledger() {
               >
                 Save Changes
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced Import Wizard Modal */}
+      {isImportWizardOpen && (
+        <div className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex items-center justify-center p-4 md:p-8 animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-border flex justify-between items-center sticky top-0 bg-card z-10 rounded-t-2xl">
+              <div>
+                <h2 className="text-2xl font-bold text-primary">Import Wizard</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {importStep === "mapping" ? "Map CSV columns to transaction fields." : "Preview your transactions before importing."}
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsImportWizardOpen(false);
+                  setImportStep("upload");
+                  setImportData([]);
+                  setMapping({});
+                }} 
+                className="text-muted-foreground hover:text-foreground p-2 rounded-full hover:bg-secondary/50 transition-colors"
+              >
+                <Icons.X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
+              {importStep === "mapping" && (
+                <div className="space-y-8">
+                  {/* Step 1: Mode Selection */}
+                  <div className="space-y-4 bg-secondary/20 p-5 rounded-xl border border-border">
+                    <h3 className="font-semibold text-lg flex items-center gap-2"><Icons.Settings2 className="w-5 h-5 text-primary"/> Statement Format</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-muted-foreground mb-2">Amount Format</label>
+                        <div className="flex gap-2 bg-background p-1 rounded-lg border border-border">
+                          <button 
+                            className={`flex-1 py-1.5 px-3 rounded-md text-sm transition-colors ${amountMode === 'single' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary/50'}`}
+                            onClick={() => setAmountMode('single')}
+                          >
+                            Single Column (+/-)
+                          </button>
+                          <button 
+                            className={`flex-1 py-1.5 px-3 rounded-md text-sm transition-colors ${amountMode === 'dual' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary/50'}`}
+                            onClick={() => setAmountMode('dual')}
+                          >
+                            Debit / Credit
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-muted-foreground mb-2">Date Format</label>
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={dateMode}
+                          onChange={(e) => setDateMode(e.target.value as any)}
+                        >
+                          <option value="auto">Auto-detect (Recommended)</option>
+                          <option value="DD/MM/YYYY">DD/MM/YYYY (Common in UAE)</option>
+                          <option value="MM/DD/YYYY">MM/DD/YYYY (US Format)</option>
+                          <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Mapping */}
+                  <div className="space-y-4">
+                    <h3 className="font-semibold text-lg flex items-center gap-2"><Icons.Columns className="w-5 h-5 text-primary"/> Column Mapping</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {/* Date */}
+                      <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+                        <label className="block text-sm font-bold mb-2 flex items-center gap-2">
+                          Date <span className="text-red-500">*</span>
+                        </label>
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={mapping.date || ""}
+                          onChange={(e) => setMapping({...mapping, date: e.target.value})}
+                        >
+                          <option value="">-- Select Column --</option>
+                          {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      {/* Description */}
+                      <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+                        <label className="block text-sm font-bold mb-2 flex items-center gap-2">
+                          Description <span className="text-red-500">*</span>
+                        </label>
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={mapping.description || ""}
+                          onChange={(e) => setMapping({...mapping, description: e.target.value})}
+                        >
+                          <option value="">-- Select Column --</option>
+                          {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      {/* Amount(s) */}
+                      {amountMode === 'single' ? (
+                        <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+                          <label className="block text-sm font-bold mb-2 flex items-center gap-2">
+                            Amount <span className="text-red-500">*</span>
+                          </label>
+                          <select 
+                            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                            value={mapping.amount || ""}
+                            onChange={(e) => setMapping({...mapping, amount: e.target.value})}
+                          >
+                            <option value="">-- Select Column --</option>
+                            {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+                            <label className="block text-sm font-bold mb-2 flex items-center gap-2">
+                              Debit (Out)
+                            </label>
+                            <select 
+                              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                              value={mapping.debit || ""}
+                              onChange={(e) => setMapping({...mapping, debit: e.target.value})}
+                            >
+                              <option value="">-- Select Column --</option>
+                              {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </div>
+                          <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+                            <label className="block text-sm font-bold mb-2 flex items-center gap-2">
+                              Credit (In)
+                            </label>
+                            <select 
+                              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                              value={mapping.credit || ""}
+                              onChange={(e) => setMapping({...mapping, credit: e.target.value})}
+                            >
+                              <option value="">-- Select Column --</option>
+                              {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Optional fields */}
+                      <div className="bg-card border border-border p-4 rounded-xl shadow-sm opacity-70 hover:opacity-100 transition-opacity">
+                        <label className="block text-sm font-bold mb-2 text-muted-foreground">Notes (Optional)</label>
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={mapping.notes || ""}
+                          onChange={(e) => setMapping({...mapping, notes: e.target.value})}
+                        >
+                          <option value="">-- None --</option>
+                          {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+                      
+                      <div className="bg-card border border-border p-4 rounded-xl shadow-sm opacity-70 hover:opacity-100 transition-opacity">
+                        <label className="block text-sm font-bold mb-2 text-muted-foreground">Balance (Optional)</label>
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={mapping.balance || ""}
+                          onChange={(e) => setMapping({...mapping, balance: e.target.value})}
+                        >
+                          <option value="">-- None --</option>
+                          {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Account Assignment */}
+                  <div className="space-y-4">
+                     <h3 className="font-semibold text-lg flex items-center gap-2"><Icons.CreditCard className="w-5 h-5 text-primary"/> Assign to Account</h3>
+                     <div className="bg-card border border-border p-4 rounded-xl shadow-sm max-w-md">
+                        <select 
+                          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                          value={selectedCardId}
+                          onChange={(e) => setSelectedCardId(e.target.value)}
+                        >
+                          <option value="">-- No specific account --</option>
+                          {cards.map(c => (
+                            <option key={c.id} value={c.id}>{c.name} (...{c.last4}) - {c.bank}</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground mt-2">All imported transactions will be linked to this account.</p>
+                     </div>
+                  </div>
+                  
+                  {/* Sample Raw Data */}
+                  <div className="mt-8 border-t border-border pt-6">
+                    <h4 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wider">Raw File Sample</h4>
+                    <div className="overflow-x-auto bg-secondary/10 rounded-lg border border-border">
+                      <table className="w-full text-xs text-left whitespace-nowrap">
+                        <thead className="bg-secondary/30 text-muted-foreground">
+                          <tr>
+                            {importHeaders.map((h, i) => <th key={i} className="px-4 py-2 font-medium">{h}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/50">
+                          {importData.slice(0, 3).map((row, i) => (
+                            <tr key={i}>
+                              {importHeaders.map((h, j) => <td key={j} className="px-4 py-2 text-muted-foreground">{row[h]}</td>)}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                </div>
+              )}
+
+              {importStep === "preview" && (
+                <div className="space-y-6">
+                  <div className="bg-primary/10 border border-primary/20 text-primary px-4 py-3 rounded-xl flex items-start gap-3">
+                    <Icons.Info className="w-5 h-5 shrink-0 mt-0.5" />
+                    <p className="text-sm">
+                      Review the first few parsed transactions. If dates or amounts look incorrect, go back and adjust your column mapping or format settings.
+                    </p>
+                  </div>
+                  
+                  <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="text-xs text-muted-foreground uppercase bg-secondary/30 border-b border-border">
+                          <tr>
+                            <th className="px-6 py-3 font-medium">Date</th>
+                            <th className="px-6 py-3 font-medium">Description</th>
+                            <th className="px-6 py-3 font-medium text-right">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {previewData.map((tx, i) => (
+                            <tr key={i} className="bg-card hover:bg-secondary/20 transition-colors">
+                              <td className="px-6 py-4 whitespace-nowrap font-mono text-xs">
+                                {tx.date}
+                              </td>
+                              <td className="px-6 py-4 font-medium text-foreground">
+                                {tx.description}
+                              </td>
+                              <td className={`px-6 py-4 text-right font-mono font-medium ${
+                                tx.type === 'income' ? 'text-green-500' : 'text-foreground'
+                              }`}>
+                                {tx.type === 'income' ? '+' : ''}{formatCurrency(tx.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground text-center">Showing {Math.min(10, importData.length)} of {importData.length} total transactions to be imported.</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-6 border-t border-border flex justify-between items-center bg-card rounded-b-2xl">
+              {importStep === "mapping" ? (
+                <>
+                  <span className="text-sm text-muted-foreground">
+                    {!isMappingValid && "Please map all required fields (*)"}
+                  </span>
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setIsImportWizardOpen(false)}
+                      className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => setImportStep("preview")}
+                      disabled={!isMappingValid}
+                      className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      Preview Data <Icons.ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => setImportStep("mapping")}
+                    className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-2"
+                  >
+                    <Icons.ArrowLeft className="w-4 h-4" /> Back to Mapping
+                  </button>
+                  <button 
+                    onClick={handleFinalizeImport}
+                    className="px-6 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-bold shadow-lg shadow-green-500/20 flex items-center gap-2"
+                  >
+                    <Icons.Check className="w-5 h-5" />
+                    Import {importData.length} Transactions
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
