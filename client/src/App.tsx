@@ -1,29 +1,37 @@
 import { Switch, Route } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { Dashboard } from "./pages/Home";
+import { Ledger } from "./pages/Ledger";
+import { Cards } from "./pages/Cards";
+import { Budgets } from "./pages/Budgets";
+import { Sidebar } from "./components/layout/Sidebar";
 import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
-      <Route component={NotFound} />
+      <Route path="/" component={Dashboard} />
+      <Route path="/ledger" component={Ledger} />
+      <Route path="/cards" component={Cards} />
+      <Route path="/budgets" component={Budgets} />
+      <Route>
+        <div className="flex flex-col items-center justify-center h-[50vh]">
+          <h1 className="text-4xl font-bold text-primary mb-4">404</h1>
+          <p className="text-muted-foreground">Page not found</p>
+        </div>
+      </Route>
     </Switch>
   );
 }
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
+    <div className="min-h-screen bg-background text-foreground flex">
+      <Sidebar />
+      <main className="flex-1 md:ml-64 p-6 lg:p-8 overflow-y-auto">
         <Router />
-      </TooltipProvider>
-    </QueryClientProvider>
+      </main>
+      <Toaster />
+    </div>
   );
 }
 

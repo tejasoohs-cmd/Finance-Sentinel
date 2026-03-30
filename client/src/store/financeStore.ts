@@ -1,0 +1,190 @@
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { v4 as uuidv4 } from 'uuid';
+import { Transaction, Card, Category, Budget, DEFAULT_CATEGORIES, TransactionTag } from '../types/finance';
+import { parseISO, format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+
+interface FinanceState {
+  transactions: Transaction[];
+  cards: Card[];
+  categories: Category[];
+  budgets: Budget[];
+  
+  // Actions
+  addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
+  updateTransaction: (id: string, tx: Partial<Transaction>) => void;
+  deleteTransaction: (id: string) => void;
+  importTransactions: (transactions: Omit<Transaction, 'id' | 'createdAt'>[]) => void;
+  
+  addCard: (card: Omit<Card, 'id'>) => void;
+  updateCard: (id: string, card: Partial<Card>) => void;
+  deleteCard: (id: string) => void;
+  
+  addBudget: (budget: Omit<Budget, 'id'>) => void;
+  updateBudget: (id: string, budget: Partial<Budget>) => void;
+  deleteBudget: (id: string) => void;
+
+  matchTransfers: () => void;
+  clearAllData: () => void;
+  loadDemoData: () => void;
+}
+
+export const useFinanceStore = create<FinanceState>()(
+  persist(
+    (set, get) => ({
+      transactions: [],
+      cards: [],
+      categories: DEFAULT_CATEGORIES,
+      budgets: [],
+
+      addTransaction: (tx) => set((state) => ({
+        transactions: [{ ...tx, id: uuidv4(), createdAt: Date.now() }, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      })),
+
+      updateTransaction: (id, txUpdate) => set((state) => ({
+        transactions: state.transactions.map((tx) => 
+          tx.id === id ? { ...tx, ...txUpdate } : tx
+        )
+      })),
+
+      deleteTransaction: (id) => set((state) => ({
+        transactions: state.transactions.filter((tx) => tx.id !== id)
+      })),
+
+      importTransactions: (newTransactions) => set((state) => {
+        const toAdd = newTransactions.map(tx => ({ ...tx, id: uuidv4(), createdAt: Date.now() }));
+        return {
+          transactions: [...toAdd, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        };
+      }),
+
+      addCard: (card) => set((state) => ({
+        cards: [...state.cards, { ...card, id: uuidv4() }]
+      })),
+
+      updateCard: (id, cardUpdate) => set((state) => ({
+        cards: state.cards.map((card) => card.id === id ? { ...card, ...cardUpdate } : card)
+      })),
+
+      deleteCard: (id) => set((state) => ({
+        cards: state.cards.filter((card) => card.id !== id),
+        // Detach card from transactions
+        transactions: state.transactions.map(tx => tx.cardId === id ? { ...tx, cardId: null } : tx)
+      })),
+
+      addBudget: (budget) => set((state) => ({
+        budgets: [...state.budgets, { ...budget, id: uuidv4() }]
+      })),
+
+      updateBudget: (id, budgetUpdate) => set((state) => ({
+        budgets: state.budgets.map((b) => b.id === id ? { ...b, ...budgetUpdate } : b)
+      })),
+
+      deleteBudget: (id) => set((state) => ({
+        budgets: state.budgets.filter((b) => b.id !== id)
+      })),
+
+      matchTransfers: () => set((state) => {
+        // Find opposing transactions with same amount, close dates (within 3 days), and mark them
+        const transactions = [...state.transactions];
+        
+        for (let i = 0; i < transactions.length; i++) {
+          const t1 = transactions[i];
+          if (t1.isTransferMatched || t1.type !== 'expense' && t1.type !== 'income') continue;
+
+          for (let j = i + 1; j < transactions.length; j++) {
+            const t2 = transactions[j];
+            if (t2.isTransferMatched) continue;
+
+            // Same amount but opposite sign (in our system, expenses are usually negative or we just check absolute equality depending on how we store it)
+            // Assuming expenses are stored as negative and income as positive
+            const isOpposite = (t1.amount === -t2.amount) || (Math.abs(t1.amount) === Math.abs(t2.amount) && t1.type !== t2.type);
+            
+            if (isOpposite) {
+              const d1 = new Date(t1.date);
+              const d2 = new Date(t2.date);
+              const diffDays = Math.abs(d1.getTime() - d2.getTime()) / (1000 * 3600 * 24);
+              
+              if (diffDays <= 3) {
+                // Match found
+                transactions[i] = { ...t1, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t2.id };
+                transactions[j] = { ...t2, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t1.id };
+                break;
+              }
+            }
+          }
+        }
+
+        return { transactions };
+      }),
+
+      clearAllData: () => set({
+        transactions: [],
+        cards: [],
+        budgets: []
+      }),
+
+      loadDemoData: () => set(() => {
+        const demoCardId1 = uuidv4();
+        const demoCardId2 = uuidv4();
+        
+        const demoCards: Card[] = [
+          { id: demoCardId1, name: 'Emirates NBD Skywards', bank: 'ENBD', last4: '4532', type: 'credit', color: 'bg-blue-600' },
+          { id: demoCardId2, name: 'ADCB Debit', bank: 'ADCB', last4: '1198', type: 'debit', color: 'bg-red-600' }
+        ];
+
+        const today = new Date();
+        const demoTransactions: Transaction[] = [
+          {
+            id: uuidv4(),
+            date: format(today, 'yyyy-MM-dd'),
+            description: 'Spinneys Dubai Marina',
+            originalDescription: 'POS PUR SPINNEYS DUBAI AE',
+            amount: -345.50,
+            type: 'expense',
+            categoryId: 'cat_groceries',
+            cardId: demoCardId1,
+            tag: 'personal',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: uuidv4(),
+            date: format(new Date(today.setDate(today.getDate() - 2)), 'yyyy-MM-dd'),
+            description: 'DEWA Bill',
+            originalDescription: 'DEWA ONLINE PAYMENT',
+            amount: -850.00,
+            type: 'expense',
+            categoryId: 'cat_utilities',
+            cardId: demoCardId1,
+            tag: 'personal',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: uuidv4(),
+            date: format(new Date(today.setDate(today.getDate() - 3)), 'yyyy-MM-dd'),
+            description: 'Monthly Salary',
+            originalDescription: 'SALARY TRANSFER CORP',
+            amount: 25000.00,
+            type: 'income',
+            categoryId: 'cat_salary',
+            cardId: demoCardId2,
+            tag: 'personal',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          }
+        ];
+
+        return {
+          cards: demoCards,
+          transactions: demoTransactions
+        };
+      })
+    }),
+    {
+      name: 'moneytrace-storage',
+      storage: createJSONStorage(() => localStorage),
+    }
+  )
+);
