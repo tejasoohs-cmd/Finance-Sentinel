@@ -3,6 +3,7 @@ import { Dashboard } from "./pages/Home";
 import { Ledger } from "./pages/Ledger";
 import { Cards } from "./pages/Cards";
 import { Budgets } from "./pages/Budgets";
+import { Transfers } from "./pages/Transfers";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -12,6 +13,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/ledger" component={Ledger} />
       <Route path="/cards" component={Cards} />
+      <Route path="/transfers" component={Transfers} />
       <Route path="/budgets" component={Budgets} />
       <Route>
         <div className="flex flex-col items-center justify-center h-[50vh]">

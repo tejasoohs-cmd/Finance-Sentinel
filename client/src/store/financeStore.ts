@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { Transaction, Card, Category, Budget, DEFAULT_CATEGORIES, TransactionTag } from '../types/finance';
-import { format } from 'date-fns';
+import { format, subDays, addDays } from 'date-fns';
 
 interface FinanceState {
   transactions: Transaction[];
@@ -33,6 +33,10 @@ interface FinanceState {
   deleteBudget: (id: string) => void;
 
   matchTransfers: () => void;
+  linkTransactions: (id1: string, id2: string, transferType?: any) => void;
+  unlinkTransaction: (id: string) => void;
+  splitTransaction: (id: string, splits: { amount: number, categoryId: string, type: 'expense'|'income'|'transfer', description: string }[]) => void;
+
   clearAllData: () => void;
   loadDemoData: () => void;
 
@@ -59,9 +63,19 @@ export const useFinanceStore = create<FinanceState>()(
         )
       })),
 
-      deleteTransaction: (id) => set((state) => ({
-        transactions: state.transactions.filter((tx) => tx.id !== id)
-      })),
+      deleteTransaction: (id) => set((state) => {
+        // If it was matched, unmatch the pair
+        const tx = state.transactions.find(t => t.id === id);
+        let newTransactions = state.transactions.filter((t) => t.id !== id);
+        
+        if (tx?.isTransferMatched && tx.transferMatchId) {
+          newTransactions = newTransactions.map(t => 
+            t.id === tx.transferMatchId ? { ...t, isTransferMatched: false, transferMatchId: undefined, transferType: 'none' } : t
+          );
+        }
+        
+        return { transactions: newTransactions };
+      }),
 
       importTransactions: (newTransactions) => set((state) => {
         const toAdd = newTransactions.map(tx => ({ ...tx, id: uuidv4(), createdAt: Date.now() }));
@@ -121,31 +135,95 @@ export const useFinanceStore = create<FinanceState>()(
         transactions: state.transactions.map(tx => ids.includes(tx.id) ? { ...tx, ...updates } : tx)
       })),
 
-      bulkDeleteTransactions: (ids) => set((state) => ({
-        transactions: state.transactions.filter(tx => !ids.includes(tx.id))
-      })),
+      bulkDeleteTransactions: (ids) => set((state) => {
+        // Just remove them for now. Complex unmatching logic can be added if needed
+        return { transactions: state.transactions.filter(tx => !ids.includes(tx.id)) };
+      }),
+
+      linkTransactions: (id1, id2, transferType = 'internal') => set((state) => {
+        return {
+          transactions: state.transactions.map(tx => {
+            if (tx.id === id1) return { ...tx, isTransferMatched: true, transferMatchId: id2, type: 'transfer', categoryId: 'cat_transfer', transferType };
+            if (tx.id === id2) return { ...tx, isTransferMatched: true, transferMatchId: id1, type: 'transfer', categoryId: 'cat_transfer', transferType };
+            return tx;
+          })
+        };
+      }),
+
+      unlinkTransaction: (id) => set((state) => {
+        const tx = state.transactions.find(t => t.id === id);
+        if (!tx || !tx.transferMatchId) return state;
+
+        const matchId = tx.transferMatchId;
+        
+        return {
+          transactions: state.transactions.map(t => {
+            if (t.id === id || t.id === matchId) {
+              return { 
+                ...t, 
+                isTransferMatched: false, 
+                transferMatchId: undefined, 
+                transferType: 'none',
+                // Revert to expense/income based on amount
+                type: t.amount >= 0 ? 'income' : 'expense',
+                categoryId: 'cat_uncategorized'
+              };
+            }
+            return t;
+          })
+        };
+      }),
+
+      splitTransaction: (id, splits) => set((state) => {
+        const parent = state.transactions.find(t => t.id === id);
+        if (!parent) return state;
+
+        const newTxs: Transaction[] = splits.map(split => ({
+          ...parent,
+          id: uuidv4(),
+          amount: split.amount,
+          categoryId: split.categoryId,
+          type: split.type,
+          description: split.description,
+          parentId: parent.id,
+          createdAt: Date.now()
+        }));
+
+        // Remove parent, insert children
+        const newTransactions = [
+          ...state.transactions.filter(t => t.id !== id),
+          ...newTxs
+        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        return { transactions: newTransactions };
+      }),
 
       matchTransfers: () => set((state) => {
         const transactions = [...state.transactions];
         
         for (let i = 0; i < transactions.length; i++) {
           const t1 = transactions[i];
-          if (t1.isTransferMatched || t1.type !== 'expense' && t1.type !== 'income') continue;
+          // We only auto-match unmatched transactions that are marked as 'transfer' or could be
+          if (t1.isTransferMatched) continue;
+          
+          // Heuristic: If description contains keywords like "transfer", "payment", "deposit" it's a good candidate
+          const isLikelyTransfer1 = t1.type === 'transfer' || /transfer|payment|deposit|wd/i.test(t1.description.toLowerCase());
 
           for (let j = i + 1; j < transactions.length; j++) {
             const t2 = transactions[j];
             if (t2.isTransferMatched) continue;
 
             const isOpposite = (t1.amount === -t2.amount) || (Math.abs(t1.amount) === Math.abs(t2.amount) && t1.type !== t2.type);
+            const isLikelyTransfer2 = t2.type === 'transfer' || /transfer|payment|deposit|wd/i.test(t2.description.toLowerCase());
             
-            if (isOpposite) {
+            if (isOpposite && (isLikelyTransfer1 || isLikelyTransfer2)) {
               const d1 = new Date(t1.date);
               const d2 = new Date(t2.date);
               const diffDays = Math.abs(d1.getTime() - d2.getTime()) / (1000 * 3600 * 24);
               
               if (diffDays <= 3) {
-                transactions[i] = { ...t1, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t2.id };
-                transactions[j] = { ...t2, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t1.id };
+                transactions[i] = { ...t1, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t2.id, transferType: 'uncertain' };
+                transactions[j] = { ...t2, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t1.id, transferType: 'uncertain' };
                 break;
               }
             }
@@ -164,51 +242,132 @@ export const useFinanceStore = create<FinanceState>()(
       }),
 
       loadDemoData: () => set((state) => {
-        const demoCardId1 = uuidv4();
-        const demoCardId2 = uuidv4();
+        const enbdDebitId = uuidv4();
+        const mashreqCCId = uuidv4();
+        const adcbCCId = uuidv4();
+        const cashWalletId = uuidv4();
         
         const demoCards: Card[] = [
-          { id: demoCardId1, name: 'Emirates NBD Skywards', bank: 'ENBD', last4: '4532', type: 'credit', color: 'bg-blue-600' },
-          { id: demoCardId2, name: 'ADCB Debit', bank: 'ADCB', last4: '1198', type: 'debit', color: 'bg-red-600' }
+          { id: enbdDebitId, name: 'ENBD Current Account', bank: 'Emirates NBD', last4: '4532', type: 'debit', color: 'bg-blue-600' },
+          { id: mashreqCCId, name: 'Mashreq Cashback CC', bank: 'Mashreq', last4: '8831', type: 'credit', color: 'bg-orange-500' },
+          { id: adcbCCId, name: 'ADCB TouchPoints CC', bank: 'ADCB', last4: '1198', type: 'credit', color: 'bg-red-600' },
+          { id: cashWalletId, name: 'Physical Cash', bank: 'Wallet', last4: 'CASH', type: 'cash', color: 'bg-green-600' }
         ];
 
         const today = new Date();
+        const d = (days: number) => format(subDays(today, days), 'yyyy-MM-dd');
+
+        // Criss-cross transfer chain scenario
+        const tx1Id = uuidv4(); // Salary
+        const tx2Id = uuidv4(); // ENBD transfer out to Mashreq CC
+        const tx3Id = uuidv4(); // Mashreq CC payment received
+        const tx4Id = uuidv4(); // ATM withdrawal from ENBD
+        const tx5Id = uuidv4(); // Cash added to wallet
+        const tx6Id = uuidv4(); // Paid ADCB CC with cash
+        const tx7Id = uuidv4(); // ADCB CC payment received
+
         const demoTransactions: Transaction[] = [
           {
+            id: tx1Id,
+            date: d(5),
+            description: 'Salary Transfer',
+            originalDescription: 'SALARY TRANSFER CORP',
+            amount: 25000.00,
+            type: 'income',
+            categoryId: 'cat_salary',
+            cardId: enbdDebitId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx2Id,
+            date: d(4),
+            description: 'Payment to Mashreq CC',
+            originalDescription: 'TRANSFER TO 8831',
+            amount: -5000.00,
+            type: 'expense', // Unmatched initially
+            categoryId: 'cat_uncategorized',
+            cardId: enbdDebitId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx3Id,
+            date: d(4),
+            description: 'Online Payment Received',
+            originalDescription: 'PAYMENT RECEIVED THANK YOU',
+            amount: 5000.00,
+            type: 'income', // Unmatched initially
+            categoryId: 'cat_uncategorized',
+            cardId: mashreqCCId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx4Id,
+            date: d(3),
+            description: 'ATM Withdrawal Marina Mall',
+            originalDescription: 'ATM WD MARINA MALL',
+            amount: -2000.00,
+            type: 'expense',
+            categoryId: 'cat_uncategorized',
+            cardId: enbdDebitId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx5Id,
+            date: d(3),
+            description: 'Cash from ATM',
+            originalDescription: 'Cash deposit to wallet',
+            amount: 2000.00,
+            type: 'income',
+            categoryId: 'cat_uncategorized',
+            cardId: cashWalletId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx6Id,
+            date: d(2),
+            description: 'Cash Payment at Branch for ADCB CC',
+            originalDescription: 'Cash Payment',
+            amount: -1500.00,
+            type: 'expense',
+            categoryId: 'cat_uncategorized',
+            cardId: cashWalletId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          {
+            id: tx7Id,
+            date: d(2),
+            description: 'Cash Deposit at CDM',
+            originalDescription: 'CASH DEPOSIT CDM BR 12',
+            amount: 1500.00,
+            type: 'income',
+            categoryId: 'cat_uncategorized',
+            cardId: adcbCCId,
+            tag: 'none',
+            isTransferMatched: false,
+            createdAt: Date.now()
+          },
+          // And one real expense to show it mixed in
+          {
             id: uuidv4(),
-            date: format(today, 'yyyy-MM-dd'),
+            date: d(1),
             description: 'Spinneys Dubai Marina',
             originalDescription: 'POS PUR SPINNEYS DUBAI AE',
             amount: -345.50,
             type: 'expense',
             categoryId: 'cat_groceries',
-            cardId: demoCardId1,
-            tag: 'personal',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: uuidv4(),
-            date: format(new Date(today.setDate(today.getDate() - 2)), 'yyyy-MM-dd'),
-            description: 'DEWA Bill',
-            originalDescription: 'DEWA ONLINE PAYMENT',
-            amount: -850.00,
-            type: 'expense',
-            categoryId: 'cat_utilities',
-            cardId: demoCardId1,
-            tag: 'personal',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: uuidv4(),
-            date: format(new Date(today.setDate(today.getDate() - 3)), 'yyyy-MM-dd'),
-            description: 'Monthly Salary',
-            originalDescription: 'SALARY TRANSFER CORP',
-            amount: 25000.00,
-            type: 'income',
-            categoryId: 'cat_salary',
-            cardId: demoCardId2,
+            cardId: mashreqCCId,
             tag: 'personal',
             isTransferMatched: false,
             createdAt: Date.now()

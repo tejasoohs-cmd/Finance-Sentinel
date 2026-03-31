@@ -1,12 +1,14 @@
 export type TransactionType = 'expense' | 'income' | 'transfer';
 export type TransactionTag = string;
 
+export type TransferType = 'internal' | 'cc_payment' | 'cash_withdrawal' | 'cash_deposit' | 'own_funding' | 'uncertain' | 'none';
+
 export interface Card {
   id: string;
   name: string; // e.g., "Emirates NBD SkyShopper"
   bank: string;
   last4: string;
-  type: 'credit' | 'debit' | 'prepaid';
+  type: 'credit' | 'debit' | 'prepaid' | 'cash';
   balance?: number; // Optional, mostly for debit
   creditLimit?: number; // For credit cards
   statementDate?: number; // 1-31
@@ -24,8 +26,15 @@ export interface Transaction {
   categoryId: string;
   cardId: string | null;
   tag: TransactionTag;
+  
+  // Transfer Matching & Classification
   isTransferMatched: boolean;
   transferMatchId?: string; // ID of the matching transaction if it's a transfer
+  transferType?: TransferType;
+  
+  // Splitting
+  parentId?: string; // If this transaction was created by splitting another
+  
   notes?: string;
   createdAt: number;
 }

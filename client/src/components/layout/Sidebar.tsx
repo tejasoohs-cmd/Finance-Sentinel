@@ -9,6 +9,7 @@ export function Sidebar() {
     { name: "Dashboard", href: "/", icon: Icons.LayoutDashboard },
     { name: "Ledger", href: "/ledger", icon: Icons.ListOrdered },
     { name: "Cards", href: "/cards", icon: Icons.CreditCard },
+    { name: "Transfers", href: "/transfers", icon: Icons.ArrowRightLeft },
     { name: "Budgets", href: "/budgets", icon: Icons.PieChart },
   ];
 
