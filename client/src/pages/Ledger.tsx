@@ -11,6 +11,7 @@ type ColumnMapping = {
   amount?: string;
   debit?: string;
   credit?: string;
+  direction?: string;
   type?: string;
   balance?: string;
   reference?: string;
@@ -295,7 +296,7 @@ export function Ledger() {
   const [importData, setImportData] = useState<any[]>([]);
   const [importHeaders, setImportHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<ColumnMapping>({});
-  const [amountMode, setAmountMode] = useState<"single" | "dual">("single");
+  const [amountMode, setAmountMode] = useState<"single" | "dual" | "direction">("single");
   const [dateMode, setDateMode] = useState<"DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD" | "auto">("auto");
   const [selectedCardId, setSelectedCardId] = useState<string>("");
   
@@ -384,6 +385,7 @@ export function Ledger() {
             else if (hLower.includes('debit')) { guessedMapping.debit = h; setAmountMode("dual"); }
             else if (hLower.includes('credit')) { guessedMapping.credit = h; setAmountMode("dual"); }
             else if (hLower.includes('balance')) guessedMapping.balance = h;
+            else if (hLower === 'type' || hLower.includes('dr/cr') || hLower.includes('direction') || hLower.includes('dr cr')) { guessedMapping.direction = h; setAmountMode("direction"); }
           });
           
           setMapping(guessedMapping);
@@ -448,6 +450,28 @@ export function Ledger() {
            isMalformed = true;
            amount = 0;
         }
+      } else if (amountMode === "direction") {
+        const rawAmount = mapping.amount && row[mapping.amount] ? row[mapping.amount].toString().trim() : "";
+        const dirStr = mapping.direction && row[mapping.direction] ? row[mapping.direction].toString().trim().toLowerCase() : "";
+        
+        const parsed = parseFloat(rawAmount.replace(/[^0-9.-]+/g, ""));
+        
+        if (!isNaN(parsed) && rawAmount !== "") {
+          const isCredit = dirStr === 'cr' || dirStr === 'credit' || dirStr === 'c' || dirStr === 'in' || dirStr === 'deposit';
+          const isDebit = dirStr === 'dr' || dirStr === 'debit' || dirStr === 'd' || dirStr === 'out' || dirStr === 'withdrawal';
+          
+          if (isCredit) {
+            amount = Math.abs(parsed);
+          } else if (isDebit) {
+            amount = -Math.abs(parsed);
+          } else {
+            isMalformed = true;
+            amount = 0;
+          }
+        } else {
+          isMalformed = true;
+          amount = 0;
+        }
       }
       
       const type = amount >= 0 ? 'income' : 'expense';
@@ -502,6 +526,28 @@ export function Ledger() {
            isMalformed = true;
            amount = 0;
         }
+      } else if (amountMode === "direction") {
+        const rawAmount = mapping.amount && row[mapping.amount] ? row[mapping.amount].toString().trim() : "";
+        const dirStr = mapping.direction && row[mapping.direction] ? row[mapping.direction].toString().trim().toLowerCase() : "";
+        
+        const parsed = parseFloat(rawAmount.replace(/[^0-9.-]+/g, ""));
+        
+        if (!isNaN(parsed) && rawAmount !== "") {
+          const isCredit = dirStr === 'cr' || dirStr === 'credit' || dirStr === 'c' || dirStr === 'in' || dirStr === 'deposit';
+          const isDebit = dirStr === 'dr' || dirStr === 'debit' || dirStr === 'd' || dirStr === 'out' || dirStr === 'withdrawal';
+          
+          if (isCredit) {
+            amount = Math.abs(parsed);
+          } else if (isDebit) {
+            amount = -Math.abs(parsed);
+          } else {
+            isMalformed = true;
+            amount = 0;
+          }
+        } else {
+          isMalformed = true;
+          amount = 0;
+        }
       }
       
       const type = amount >= 0 ? 'income' : 'expense';
@@ -531,7 +577,11 @@ export function Ledger() {
     setMapping({});
   };
 
-  const isMappingValid = mapping.date && mapping.description && (amountMode === "single" ? mapping.amount : (mapping.debit || mapping.credit));
+  const isMappingValid = mapping.date && mapping.description && (
+    amountMode === "single" ? mapping.amount : 
+    amountMode === "dual" ? (mapping.debit || mapping.credit) : 
+    (mapping.amount && mapping.direction)
+  );
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
@@ -566,22 +616,22 @@ export function Ledger() {
       </div>
 
       {/* View Mode Tabs */}
-      <div className="flex gap-2 border-b border-border pb-px mb-4">
+      <div className="flex gap-2 border-b border-border pb-px mb-4 overflow-x-auto custom-scrollbar">
         <button 
           onClick={() => setViewMode("unreviewed")}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === "unreviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${viewMode === "unreviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
         >
           To Review {unreviewedCount > 0 && <span className="bg-primary text-primary-foreground px-1.5 py-0.5 rounded-full text-[10px]">{unreviewedCount}</span>}
         </button>
         <button 
           onClick={() => setViewMode("reviewed")}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${viewMode === "reviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${viewMode === "reviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
         >
           Reviewed
         </button>
         <button 
           onClick={() => setViewMode("all")}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${viewMode === "all" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${viewMode === "all" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
         >
           All History
         </button>
@@ -946,16 +996,22 @@ export function Ledger() {
                           <label className="block text-sm font-medium mb-1">Amount Column Style</label>
                           <div className="flex bg-background border border-border rounded-xl overflow-hidden p-1">
                             <button 
-                              className={`flex-1 py-2 text-sm font-bold rounded-lg ${amountMode === 'single' ? 'bg-card shadow text-foreground' : 'text-muted-foreground'}`}
+                              className={`flex-1 py-2 text-xs font-bold rounded-lg ${amountMode === 'single' ? 'bg-card shadow text-foreground' : 'text-muted-foreground'}`}
                               onClick={() => setAmountMode("single")}
                             >
                               Single (+/-)
                             </button>
                             <button 
-                              className={`flex-1 py-2 text-sm font-bold rounded-lg ${amountMode === 'dual' ? 'bg-card shadow text-foreground' : 'text-muted-foreground'}`}
+                              className={`flex-1 py-2 text-xs font-bold rounded-lg ${amountMode === 'dual' ? 'bg-card shadow text-foreground' : 'text-muted-foreground'}`}
                               onClick={() => setAmountMode("dual")}
                             >
                               Separate In/Out
+                            </button>
+                            <button 
+                              className={`flex-1 py-2 text-xs font-bold rounded-lg ${amountMode === 'direction' ? 'bg-card shadow text-foreground' : 'text-muted-foreground'}`}
+                              onClick={() => setAmountMode("direction")}
+                            >
+                              Amount + DR/CR
                             </button>
                           </div>
                         </div>
@@ -994,7 +1050,7 @@ export function Ledger() {
                               {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                             </select>
                           </div>
-                        ) : (
+                        ) : amountMode === "dual" ? (
                           <>
                             <div className="flex items-center gap-3">
                               <span className="w-24 text-sm font-bold text-right">Debit (Out) *</span>
@@ -1009,6 +1065,27 @@ export function Ledger() {
                               <span className="w-24 text-sm font-bold text-right">Credit (In) *</span>
                               <select className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm"
                                 value={mapping.credit || ""} onChange={e => setMapping({...mapping, credit: e.target.value})}
+                              >
+                                <option value="">-- Select --</option>
+                                {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                              </select>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-3">
+                              <span className="w-24 text-sm font-bold text-right">Amount *</span>
+                              <select className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm"
+                                value={mapping.amount || ""} onChange={e => setMapping({...mapping, amount: e.target.value})}
+                              >
+                                <option value="">-- Select --</option>
+                                {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="w-24 text-sm font-bold text-right">Direction (DR/CR) *</span>
+                              <select className="flex-1 px-4 py-2.5 bg-background border border-border rounded-xl text-sm"
+                                value={mapping.direction || ""} onChange={e => setMapping({...mapping, direction: e.target.value})}
                               >
                                 <option value="">-- Select --</option>
                                 {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
