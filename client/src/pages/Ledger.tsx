@@ -418,13 +418,36 @@ export function Ledger() {
     
     return importData.slice(0, 10).map((row) => {
       let amount = 0;
+      let isMalformed = false;
       
       if (amountMode === "single" && mapping.amount && row[mapping.amount]) {
-        amount = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, "")) || 0;
+        const parsed = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, ""));
+        if (!isNaN(parsed)) amount = parsed;
+        else isMalformed = true;
       } else if (amountMode === "dual") {
-        const debit = mapping.debit && row[mapping.debit] ? parseFloat(row[mapping.debit].toString().replace(/[^0-9.-]+/g, "")) : 0;
-        const credit = mapping.credit && row[mapping.credit] ? parseFloat(row[mapping.credit].toString().replace(/[^0-9.-]+/g, "")) : 0;
-        amount = credit > 0 ? credit : -Math.abs(debit);
+        const debitStr = mapping.debit && row[mapping.debit] ? row[mapping.debit].toString().trim() : "";
+        const creditStr = mapping.credit && row[mapping.credit] ? row[mapping.credit].toString().trim() : "";
+        
+        const debitRaw = parseFloat(debitStr.replace(/[^0-9.-]+/g, ""));
+        const creditRaw = parseFloat(creditStr.replace(/[^0-9.-]+/g, ""));
+
+        const isDebitValid = !isNaN(debitRaw) && debitStr !== "";
+        const isCreditValid = !isNaN(creditRaw) && creditStr !== "";
+
+        const debitValue = isDebitValid ? Math.abs(debitRaw) : 0;
+        const creditValue = isCreditValid ? Math.abs(creditRaw) : 0;
+
+        if (debitValue > 0 && creditValue > 0) {
+           isMalformed = true;
+           amount = 0;
+        } else if (creditValue > 0) {
+           amount = creditValue;
+        } else if (debitValue > 0) {
+           amount = -debitValue;
+        } else {
+           isMalformed = true;
+           amount = 0;
+        }
       }
       
       const type = amount >= 0 ? 'income' : 'expense';
@@ -440,7 +463,8 @@ export function Ledger() {
         categoryId: 'cat_uncategorized',
         cardId: selectedCardId || null,
         tag: 'none',
-        isTransferMatched: false
+        isTransferMatched: false,
+        isMalformed
       };
     });
   }, [importData, mapping, amountMode, dateMode, importStep, selectedCardId]);
@@ -448,13 +472,36 @@ export function Ledger() {
   const handleFinalizeImport = () => {
     const finalData = importData.map((row) => {
       let amount = 0;
+      let isMalformed = false;
       
       if (amountMode === "single" && mapping.amount && row[mapping.amount]) {
-        amount = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, "")) || 0;
+        const parsed = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, ""));
+        if (!isNaN(parsed)) amount = parsed;
+        else isMalformed = true;
       } else if (amountMode === "dual") {
-        const debit = mapping.debit && row[mapping.debit] ? parseFloat(row[mapping.debit].toString().replace(/[^0-9.-]+/g, "")) : 0;
-        const credit = mapping.credit && row[mapping.credit] ? parseFloat(row[mapping.credit].toString().replace(/[^0-9.-]+/g, "")) : 0;
-        amount = credit > 0 ? credit : -Math.abs(debit);
+        const debitStr = mapping.debit && row[mapping.debit] ? row[mapping.debit].toString().trim() : "";
+        const creditStr = mapping.credit && row[mapping.credit] ? row[mapping.credit].toString().trim() : "";
+        
+        const debitRaw = parseFloat(debitStr.replace(/[^0-9.-]+/g, ""));
+        const creditRaw = parseFloat(creditStr.replace(/[^0-9.-]+/g, ""));
+
+        const isDebitValid = !isNaN(debitRaw) && debitStr !== "";
+        const isCreditValid = !isNaN(creditRaw) && creditStr !== "";
+
+        const debitValue = isDebitValid ? Math.abs(debitRaw) : 0;
+        const creditValue = isCreditValid ? Math.abs(creditRaw) : 0;
+
+        if (debitValue > 0 && creditValue > 0) {
+           isMalformed = true;
+           amount = 0;
+        } else if (creditValue > 0) {
+           amount = creditValue;
+        } else if (debitValue > 0) {
+           amount = -debitValue;
+        } else {
+           isMalformed = true;
+           amount = 0;
+        }
       }
       
       const type = amount >= 0 ? 'income' : 'expense';
@@ -464,7 +511,7 @@ export function Ledger() {
       
       return {
         date: parseDate(dateStr, dateMode),
-        description: desc,
+        description: isMalformed ? `[REVIEW REQUIRED] ${desc}` : desc,
         originalDescription: desc,
         amount,
         type: type as any,
@@ -472,7 +519,8 @@ export function Ledger() {
         cardId: selectedCardId || null,
         tag: 'none' as any,
         isTransferMatched: false,
-        notes
+        isReviewed: false,
+        notes: isMalformed ? `Malformed amount row in CSV. Please manually update the correct amount.` : notes
       };
     });
 
@@ -987,16 +1035,31 @@ export function Ledger() {
                         <tr>
                           <th className="px-6 py-4">Date</th>
                           <th className="px-6 py-4">Description</th>
+                          <th className="px-6 py-4">Direction</th>
                           <th className="px-6 py-4 text-right">Amount</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border bg-card">
                         {previewData.map((row, i) => (
-                          <tr key={i} className="hover:bg-secondary/20 transition-colors">
+                          <tr key={i} className={`hover:bg-secondary/20 transition-colors ${(row as any).isMalformed ? 'bg-destructive/5' : ''}`}>
                             <td className="px-6 py-3 font-medium">{row.date}</td>
-                            <td className="px-6 py-3">{row.description}</td>
-                            <td className={`px-6 py-3 text-right font-mono font-bold ${row.amount > 0 ? 'text-green-500' : ''}`}>
-                              {row.amount > 0 ? '+' : ''}{formatCurrency(row.amount)}
+                            <td className="px-6 py-3">
+                              {row.description}
+                              {(row as any).isMalformed && (
+                                <span className="ml-2 text-[10px] bg-destructive text-destructive-foreground px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">Error</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {(row as any).isMalformed ? (
+                                <span className="text-muted-foreground">Unknown</span>
+                              ) : row.type === 'income' ? (
+                                <span className="text-green-500 font-medium flex items-center gap-1"><Icons.ArrowDownLeft className="w-3 h-3"/> In</span>
+                              ) : (
+                                <span className="text-foreground font-medium flex items-center gap-1"><Icons.ArrowUpRight className="w-3 h-3"/> Out</span>
+                              )}
+                            </td>
+                            <td className={`px-6 py-3 text-right font-mono font-bold ${(row as any).isMalformed ? 'text-destructive' : row.amount > 0 ? 'text-green-500' : ''}`}>
+                              {(row as any).isMalformed ? 'Invalid' : `${row.amount > 0 ? '+' : ''}${formatCurrency(row.amount)}`}
                             </td>
                           </tr>
                         ))}
