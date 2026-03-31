@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { Transaction, Card, Category, Budget, DEFAULT_CATEGORIES, TransactionTag } from '../types/finance';
 import { format, subDays, addDays } from 'date-fns';
+import { CategorizationRule, DEFAULT_RULES, autoCategorize } from '../utils/categorization';
 
 interface FinanceState {
   transactions: Transaction[];
@@ -10,6 +11,7 @@ interface FinanceState {
   categories: Category[];
   tags: string[];
   budgets: Budget[];
+  categorizationRules: CategorizationRule[];
   
   // Actions
   addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
@@ -42,6 +44,11 @@ interface FinanceState {
 
   bulkUpdateTransactions: (ids: string[], updates: Partial<Transaction>) => void;
   bulkDeleteTransactions: (ids: string[]) => void;
+  
+  // Categorization Rules
+  addCategorizationRule: (rule: Omit<CategorizationRule, 'id'>) => void;
+  deleteCategorizationRule: (id: string) => void;
+  learnFromTransaction: (description: string, categoryId: string, tag: string, type: 'expense' | 'income' | 'transfer') => void;
 }
 
 export const useFinanceStore = create<FinanceState>()(
@@ -52,16 +59,37 @@ export const useFinanceStore = create<FinanceState>()(
       categories: DEFAULT_CATEGORIES,
       tags: ['none', 'personal', 'business'],
       budgets: [],
+      categorizationRules: DEFAULT_RULES,
 
-      addTransaction: (tx) => set((state) => ({
-        transactions: [{ ...tx, id: uuidv4(), createdAt: Date.now() }, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      })),
+      addTransaction: (tx) => set((state) => {
+        // Auto-categorize if it's uncategorized
+        let finalTx = { ...tx };
+        if (tx.categoryId === 'cat_uncategorized') {
+           const result = autoCategorize(tx.description, state.categorizationRules, tx.type);
+           finalTx.categoryId = result.categoryId;
+           if (tx.tag === 'none') {
+             finalTx.tag = result.tag;
+           }
+        }
+        
+        return {
+          transactions: [{ ...finalTx, id: uuidv4(), createdAt: Date.now() }, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        }
+      }),
 
-      updateTransaction: (id, txUpdate) => set((state) => ({
-        transactions: state.transactions.map((tx) => 
-          tx.id === id ? { ...tx, ...txUpdate } : tx
-        )
-      })),
+      updateTransaction: (id, txUpdate) => set((state) => {
+         // If category or tag is manually changed, learn from it
+         const oldTx = state.transactions.find(t => t.id === id);
+         if (oldTx && txUpdate.categoryId && oldTx.categoryId !== txUpdate.categoryId) {
+            get().learnFromTransaction(oldTx.description, txUpdate.categoryId, txUpdate.tag || oldTx.tag, txUpdate.type || oldTx.type);
+         }
+         
+         return {
+          transactions: state.transactions.map((tx) => 
+            tx.id === id ? { ...tx, ...txUpdate } : tx
+          )
+         }
+      }),
 
       deleteTransaction: (id) => set((state) => {
         // If it was matched, unmatch the pair
@@ -78,7 +106,19 @@ export const useFinanceStore = create<FinanceState>()(
       }),
 
       importTransactions: (newTransactions) => set((state) => {
-        const toAdd = newTransactions.map(tx => ({ ...tx, id: uuidv4(), createdAt: Date.now() }));
+        const toAdd = newTransactions.map(tx => {
+           let finalTx = { ...tx, id: uuidv4(), createdAt: Date.now() };
+           
+           if (finalTx.categoryId === 'cat_uncategorized') {
+             const result = autoCategorize(finalTx.description, state.categorizationRules, finalTx.type);
+             finalTx.categoryId = result.categoryId;
+             if (finalTx.tag === 'none') {
+               finalTx.tag = result.tag;
+             }
+           }
+           return finalTx;
+        });
+        
         return {
           transactions: [...toAdd, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         };
@@ -138,6 +178,42 @@ export const useFinanceStore = create<FinanceState>()(
       bulkDeleteTransactions: (ids) => set((state) => {
         // Just remove them for now. Complex unmatching logic can be added if needed
         return { transactions: state.transactions.filter(tx => !ids.includes(tx.id)) };
+      }),
+
+      addCategorizationRule: (rule) => set((state) => ({
+        categorizationRules: [...state.categorizationRules, { ...rule, id: `rule_custom_${uuidv4()}` }]
+      })),
+
+      deleteCategorizationRule: (id) => set((state) => ({
+        categorizationRules: state.categorizationRules.filter(r => r.id !== id)
+      })),
+
+      learnFromTransaction: (description, categoryId, tag, type) => set((state) => {
+         if (!description || categoryId === 'cat_uncategorized' || description.length < 3) return state;
+         
+         // Only learn from the first couple words to be robust against dates/numbers in descriptions
+         const words = description.split(/[\s,.-]+/).filter(w => w.length > 2);
+         if (words.length === 0) return state;
+         
+         const keyword = words.slice(0, 2).join(' ').toLowerCase();
+         
+         // Don't overwrite existing rule for this exact keyword
+         if (state.categorizationRules.some(r => r.keyword === keyword)) {
+            return state;
+         }
+         
+         const newRule: CategorizationRule = {
+            id: `rule_learned_${uuidv4()}`,
+            keyword,
+            categoryId,
+            tag,
+            type,
+            isExactMatch: false
+         };
+         
+         return {
+            categorizationRules: [newRule, ...state.categorizationRules] // Put learned rules first so they take priority
+         };
       }),
 
       linkTransactions: (id1, id2, transferType = 'internal') => set((state) => {

@@ -3,6 +3,7 @@ import { Dashboard } from "./pages/Home";
 import { Ledger } from "./pages/Ledger";
 import { Cards } from "./pages/Cards";
 import { Categories } from "./pages/Categories";
+import { Rules } from "./pages/Rules";
 import { Budgets } from "./pages/Budgets";
 import { Transfers } from "./pages/Transfers";
 import { ExportCenter } from "./pages/Export";
@@ -17,6 +18,7 @@ function Router() {
       <Route path="/ledger" component={Ledger} />
       <Route path="/cards" component={Cards} />
       <Route path="/categories" component={Categories} />
+      <Route path="/rules" component={Rules} />
       <Route path="/transfers" component={Transfers} />
       <Route path="/budgets" component={Budgets} />
       <Route path="/export" component={ExportCenter} />
