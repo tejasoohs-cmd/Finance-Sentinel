@@ -11,6 +11,7 @@ export function Sidebar() {
     { name: "Accounts", href: "/cards", icon: Icons.CreditCard },
     { name: "Categories", href: "/categories", icon: Icons.Tags },
     { name: "Rules", href: "/rules", icon: Icons.Brain },
+    { name: "Reports", href: "/reports", icon: Icons.PieChart },
     { name: "Transfers", href: "/transfers", icon: Icons.ArrowRightLeft },
     { name: "Export", href: "/export", icon: Icons.FileSpreadsheet },
     { name: "Settings", href: "/settings", icon: Icons.Settings },

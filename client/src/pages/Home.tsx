@@ -3,10 +3,17 @@ import { useFinanceStore } from "@/store/financeStore";
 import { Card, Category, Transaction } from "@/types/finance";
 import * as Icons from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
+import { useLocation } from "wouter";
 
 export function Dashboard() {
-  const { transactions, loadDemoData, clearAllData, cards } = useFinanceStore();
+  const { transactions, loadDemoData, clearAllData, cards, categories } = useFinanceStore();
   const [viewMode, setViewMode] = useState<"actual" | "full">("actual");
+  const [, setLocation] = useLocation();
+
+  const navigateToLedger = (params: Record<string, string>) => {
+    const query = new URLSearchParams({ view: 'all', ...params }).toString();
+    setLocation(`/ledger?${query}`);
+  };
 
   // Filter transactions based on view mode
   // "actual" mode excludes internal transfers and CC payments from expense/income calculation
@@ -100,7 +107,10 @@ export function Dashboard() {
           </div>
         </div>
         
-        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-green-500/50 transition-colors">
+        <div 
+          onClick={() => navigateToLedger({ type: 'income' })}
+          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-green-500/50 transition-colors cursor-pointer"
+        >
           <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Income' : 'Total Inflow'}</h3>
@@ -113,7 +123,10 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-red-500/50 transition-colors">
+        <div 
+          onClick={() => navigateToLedger({ type: 'expense' })}
+          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-red-500/50 transition-colors cursor-pointer"
+        >
           <div className="absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Expenses' : 'Total Outflow'}</h3>
@@ -125,18 +138,21 @@ export function Dashboard() {
             {formatCurrency(expenses)}
           </div>
           <div className="flex gap-4 mt-4 pt-4 border-t border-border">
-             <div>
+             <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'personal' }); }} className="hover:opacity-70 transition-opacity">
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Personal</p>
                 <p className="font-mono font-bold text-sm">{formatCurrency(personalExpenses)}</p>
              </div>
-             <div>
+             <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'business' }); }} className="hover:opacity-70 transition-opacity">
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Business</p>
                 <p className="font-mono font-bold text-sm">{formatCurrency(businessExpenses)}</p>
              </div>
           </div>
         </div>
 
-        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors bg-gradient-to-br from-yellow-900/10 to-transparent">
+        <div 
+          onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id })}
+          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors bg-gradient-to-br from-yellow-900/10 to-transparent cursor-pointer"
+        >
           <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Cash Wallet</h3>

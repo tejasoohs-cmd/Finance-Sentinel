@@ -35,6 +35,8 @@ export interface Transaction {
   // Splitting
   parentId?: string; // If this transaction was created by splitting another
   
+  isReviewed?: boolean;
+  
   notes?: string;
   createdAt: number;
 }

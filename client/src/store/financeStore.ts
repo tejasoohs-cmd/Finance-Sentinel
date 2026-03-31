@@ -63,7 +63,7 @@ export const useFinanceStore = create<FinanceState>()(
 
       addTransaction: (tx) => set((state) => {
         // Auto-categorize if it's uncategorized
-        let finalTx = { ...tx };
+        let finalTx = { ...tx, isReviewed: true };
         if (tx.categoryId === 'cat_uncategorized') {
            const result = autoCategorize(tx.description, state.categorizationRules, tx.type);
            finalTx.categoryId = result.categoryId;
@@ -86,7 +86,7 @@ export const useFinanceStore = create<FinanceState>()(
          
          return {
           transactions: state.transactions.map((tx) => 
-            tx.id === id ? { ...tx, ...txUpdate } : tx
+            tx.id === id ? { ...tx, ...txUpdate, isReviewed: true } : tx
           )
          }
       }),
@@ -107,13 +107,17 @@ export const useFinanceStore = create<FinanceState>()(
 
       importTransactions: (newTransactions) => set((state) => {
         const toAdd = newTransactions.map(tx => {
-           let finalTx = { ...tx, id: uuidv4(), createdAt: Date.now() };
+           let finalTx = { ...tx, id: uuidv4(), createdAt: Date.now(), isReviewed: false };
            
            if (finalTx.categoryId === 'cat_uncategorized') {
              const result = autoCategorize(finalTx.description, state.categorizationRules, finalTx.type);
              finalTx.categoryId = result.categoryId;
              if (finalTx.tag === 'none') {
                finalTx.tag = result.tag;
+             }
+             // Confident match -> auto review
+             if (result.categoryId !== 'cat_uncategorized' && result.categoryId !== 'cat_other' && result.categoryId !== 'cat_transfer') {
+               finalTx.isReviewed = true;
              }
            }
            return finalTx;

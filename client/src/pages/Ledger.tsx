@@ -1,8 +1,9 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useFinanceStore } from "@/store/financeStore";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import * as Icons from "lucide-react";
 import Papa from "papaparse";
+import { useLocation, useSearch } from "wouter";
 
 type ColumnMapping = {
   date?: string;
@@ -257,8 +258,28 @@ export function Ledger() {
     bulkUpdateTransactions, bulkDeleteTransactions
   } = useFinanceStore();
   
+  const searchString = useSearch();
+  const searchParams = new URLSearchParams(searchString);
+  
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState<string>("all");
+  const [filterType, setFilterType] = useState<string>(searchParams.get("type") || "all");
+  const [filterCategory, setFilterCategory] = useState<string>(searchParams.get("category") || "all");
+  const [filterCard, setFilterCard] = useState<string>(searchParams.get("card") || "all");
+  const [filterTag, setFilterTag] = useState<string>(searchParams.get("tag") || "all");
+  
+  // Review workflow state
+  const [viewMode, setViewMode] = useState<"unreviewed" | "reviewed" | "all">(
+    (searchParams.get("view") as any) || "unreviewed"
+  );
+  
+  // Update filters if URL changes
+  useEffect(() => {
+    if (searchParams.get("type")) setFilterType(searchParams.get("type")!);
+    if (searchParams.get("category")) setFilterCategory(searchParams.get("category")!);
+    if (searchParams.get("card")) setFilterCard(searchParams.get("card")!);
+    if (searchParams.get("tag")) setFilterTag(searchParams.get("tag")!);
+    if (searchParams.get("view")) setViewMode(searchParams.get("view") as any);
+  }, [searchString]);
   
   // Selection state
   const [selectedTxs, setSelectedTxs] = useState<Set<string>>(new Set());
@@ -284,8 +305,19 @@ export function Ledger() {
     const matchesSearch = tx.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (tx.originalDescription && tx.originalDescription.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesType = filterType === "all" || tx.type === filterType;
-    return matchesSearch && matchesType;
+    const matchesCategory = filterCategory === "all" || tx.categoryId === filterCategory;
+    const matchesCard = filterCard === "all" || tx.cardId === filterCard;
+    const matchesTag = filterTag === "all" || tx.tag === filterTag;
+    
+    const matchesViewMode = 
+      viewMode === "all" ? true :
+      viewMode === "reviewed" ? tx.isReviewed :
+      !tx.isReviewed; // unreviewed
+      
+    return matchesSearch && matchesType && matchesCategory && matchesCard && matchesTag && matchesViewMode;
   });
+
+  const unreviewedCount = transactions.filter(t => !t.isReviewed).length;
 
   const isAllSelected = filteredTransactions.length > 0 && selectedTxs.size === filteredTransactions.length;
 
@@ -306,14 +338,19 @@ export function Ledger() {
 
   const handleBulkUpdate = () => {
     if (bulkEditMode === 'category') {
-      bulkUpdateTransactions(Array.from(selectedTxs), { categoryId: bulkEditValue });
+      bulkUpdateTransactions(Array.from(selectedTxs), { categoryId: bulkEditValue, isReviewed: true });
     } else if (bulkEditMode === 'tag') {
-      bulkUpdateTransactions(Array.from(selectedTxs), { tag: bulkEditValue });
+      bulkUpdateTransactions(Array.from(selectedTxs), { tag: bulkEditValue, isReviewed: true });
     } else if (bulkEditMode === 'note') {
       bulkUpdateTransactions(Array.from(selectedTxs), { notes: bulkEditValue });
     }
     setBulkEditMode(null);
     setBulkEditValue('');
+    setSelectedTxs(new Set());
+  };
+
+  const handleBulkMarkReviewed = () => {
+    bulkUpdateTransactions(Array.from(selectedTxs), { isReviewed: true });
     setSelectedTxs(new Set());
   };
 
@@ -480,31 +517,139 @@ export function Ledger() {
         </div>
       </div>
 
+      {/* View Mode Tabs */}
+      <div className="flex gap-2 border-b border-border pb-px mb-4">
+        <button 
+          onClick={() => setViewMode("unreviewed")}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === "unreviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+        >
+          To Review {unreviewedCount > 0 && <span className="bg-primary text-primary-foreground px-1.5 py-0.5 rounded-full text-[10px]">{unreviewedCount}</span>}
+        </button>
+        <button 
+          onClick={() => setViewMode("reviewed")}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${viewMode === "reviewed" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+        >
+          Reviewed
+        </button>
+        <button 
+          onClick={() => setViewMode("all")}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${viewMode === "all" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"}`}
+        >
+          All History
+        </button>
+      </div>
+
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4 items-center bg-card p-4 rounded-2xl border border-border shadow-sm">
-        <div className="relative flex-1 w-full">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center bg-card p-4 rounded-2xl border border-border shadow-sm">
+        <div className="relative w-full md:col-span-2">
           <Icons.Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search descriptions, tags, or amounts..."
+            placeholder="Search descriptions..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all"
           />
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-            className="w-full sm:w-auto px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all cursor-pointer"
-          >
-            <option value="all">All Types</option>
-            <option value="expense">Expenses</option>
-            <option value="income">Income</option>
-            <option value="transfer">Transfers</option>
-          </select>
-        </div>
+        
+        <select
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          className="w-full px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all cursor-pointer"
+        >
+          <option value="all">All Types</option>
+          <option value="expense">Expenses</option>
+          <option value="income">Income</option>
+          <option value="transfer">Transfers</option>
+        </select>
+
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="w-full px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all cursor-pointer"
+        >
+          <option value="all">All Categories</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        
+        <select
+          value={filterCard}
+          onChange={(e) => setFilterCard(e.target.value)}
+          className="w-full px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all cursor-pointer"
+        >
+          <option value="all">All Accounts</option>
+          {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        
+        <select
+          value={filterTag}
+          onChange={(e) => setFilterTag(e.target.value)}
+          className="w-full px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all cursor-pointer"
+        >
+          <option value="all">All Tags</option>
+          {tags.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
+        </select>
       </div>
+
+      {/* Bulk Actions */}
+      {selectedTxs.size > 0 && (
+        <div className="bg-primary/10 border border-primary/20 p-3 rounded-2xl flex flex-wrap items-center gap-3 animate-in slide-in-from-top-2 mb-4">
+          <span className="text-sm font-bold text-primary pl-2">{selectedTxs.size} selected</span>
+          <div className="w-px h-6 bg-primary/20 mx-1"></div>
+          
+          <div className="flex gap-2 items-center flex-1">
+            {!bulkEditMode ? (
+              <>
+                <button onClick={handleBulkMarkReviewed} className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium hover:bg-secondary transition-colors flex items-center gap-1.5">
+                  <Icons.CheckCircle2 className="w-3.5 h-3.5" /> Mark Reviewed
+                </button>
+                <button onClick={() => setBulkEditMode('category')} className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium hover:bg-secondary transition-colors flex items-center gap-1.5">
+                  <Icons.Tag className="w-3.5 h-3.5" /> Set Category
+                </button>
+                <button onClick={() => setBulkEditMode('tag')} className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium hover:bg-secondary transition-colors flex items-center gap-1.5">
+                  <Icons.Hash className="w-3.5 h-3.5" /> Set Tag
+                </button>
+                <button onClick={handleBulkDelete} className="px-3 py-1.5 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg text-xs font-medium hover:bg-destructive hover:text-destructive-foreground transition-colors ml-auto flex items-center gap-1.5">
+                  <Icons.Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4">
+                {bulkEditMode === 'category' && (
+                  <select 
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none"
+                    value={bulkEditValue}
+                    onChange={(e) => setBulkEditValue(e.target.value)}
+                  >
+                    <option value="">Select Category...</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                )}
+                {bulkEditMode === 'tag' && (
+                  <select 
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none"
+                    value={bulkEditValue}
+                    onChange={(e) => setBulkEditValue(e.target.value)}
+                  >
+                    <option value="">Select Tag...</option>
+                    {tags.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                )}
+                <button 
+                  onClick={handleBulkUpdate}
+                  disabled={!bulkEditValue}
+                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
+                >
+                  Apply
+                </button>
+                <button onClick={() => setBulkEditMode(null)} className="px-2 py-1.5 text-muted-foreground hover:text-foreground">
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Transaction List */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm relative">
