@@ -7,6 +7,12 @@ import { Card } from "@/types/finance";
 export function Cards() {
   const { cards, addCard, deleteCard, transactions } = useFinanceStore();
   const [isAdding, setIsAdding] = useState(false);
+  const [newCardType, setNewCardType] = useState<'credit' | 'debit' | 'cash'>('debit');
+
+  const handleOpenAdd = () => {
+    setNewCardType('debit');
+    setIsAdding(true);
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
@@ -16,7 +22,7 @@ export function Cards() {
           <p className="text-muted-foreground">Manage your banks, cards, and physical cash.</p>
         </div>
         <button 
-          onClick={() => setIsAdding(true)}
+          onClick={handleOpenAdd}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium shadow-lg shadow-primary/20"
         >
           <Icons.Plus className="h-4 w-4" />
@@ -86,7 +92,7 @@ export function Cards() {
 
         {cards.length === 0 && !isAdding && (
           <div 
-            onClick={() => setIsAdding(true)}
+            onClick={handleOpenAdd}
             className="border-2 border-dashed border-border rounded-2xl aspect-[1.58] flex flex-col items-center justify-center text-muted-foreground hover:bg-secondary/30 hover:border-primary/50 hover:text-primary transition-all cursor-pointer"
           >
             <Icons.CreditCard className="w-8 h-8 mb-2 opacity-50" />
@@ -102,44 +108,41 @@ export function Cards() {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Account Type</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['credit', 'debit', 'cash'].map(type => (
-                    <label key={type} className={`flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${
-                      (document.getElementById('new-card-type') as HTMLInputElement)?.value === type 
-                        ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20' 
-                        : 'border-border bg-background text-foreground hover:bg-secondary/50'
-                    }`}>
-                      <input type="radio" name="accountType" id="new-card-type" value={type} className="hidden" defaultChecked={type === 'debit'} 
-                        onChange={(e) => {
-                          // trigger re-render hack for UI update
-                          const el = document.getElementById('type-rerender-hack');
-                          if(el) el.innerText = e.target.value;
-                        }}
-                      />
-                      <span className="text-sm font-medium capitalize flex items-center gap-2">
-                        {type === 'cash' ? <Icons.Banknote className="w-4 h-4"/> : <Icons.CreditCard className="w-4 h-4"/>}
-                        {type}
-                      </span>
-                    </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['credit', 'debit', 'cash'] as const).map(type => (
+                    <button 
+                      key={type} 
+                      type="button"
+                      onClick={() => setNewCardType(type)}
+                      className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${
+                        newCardType === type 
+                          ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20' 
+                          : 'border-border bg-background text-foreground hover:bg-secondary/50'
+                      }`}
+                    >
+                      {type === 'cash' ? <Icons.Banknote className="w-5 h-5 mb-1"/> : <Icons.CreditCard className="w-5 h-5 mb-1"/>}
+                      <span className="text-xs font-medium capitalize">{type}</span>
+                    </button>
                   ))}
-                  <span id="type-rerender-hack" className="hidden">debit</span>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Institution / Bank Name</label>
-                <input type="text" placeholder="e.g. Emirates NBD, Mashreq, Wallet" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-bank"/>
+                <input type="text" placeholder={newCardType === 'cash' ? "e.g. Wallet, Safe" : "e.g. Emirates NBD, Mashreq"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-bank"/>
               </div>
               
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Display Name</label>
-                <input type="text" placeholder="e.g. Skywards Infinite" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-name"/>
+                <input type="text" placeholder={newCardType === 'cash' ? "e.g. Daily Cash" : "e.g. Skywards Infinite"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-name"/>
               </div>
               
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Last 4 Digits (Optional)</label>
-                <input type="text" maxLength={4} placeholder="1234" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-last4"/>
-              </div>
+              {newCardType !== 'cash' && (
+                <div className="animate-in slide-in-from-top-2 duration-200 fade-in">
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Last 4 Digits (Optional)</label>
+                  <input type="text" maxLength={4} placeholder="1234" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-last4"/>
+                </div>
+              )}
             </div>
             
             <div className="mt-8 flex justify-end gap-3 pt-4 border-t border-border">
@@ -151,13 +154,11 @@ export function Cards() {
               </button>
               <button 
                 onClick={() => {
-                  const type = Array.from(document.getElementsByName('accountType') as NodeListOf<HTMLInputElement>).find(r => r.checked)?.value || 'debit';
-                  
                   addCard({
-                    name: (document.getElementById('new-card-name') as HTMLInputElement).value || 'My Account',
-                    bank: (document.getElementById('new-card-bank') as HTMLInputElement).value || 'Bank',
-                    last4: type === 'cash' ? 'CASH' : ((document.getElementById('new-card-last4') as HTMLInputElement).value || '0000'),
-                    type: type as any,
+                    name: (document.getElementById('new-card-name') as HTMLInputElement).value || (newCardType === 'cash' ? 'My Cash' : 'My Account'),
+                    bank: (document.getElementById('new-card-bank') as HTMLInputElement).value || (newCardType === 'cash' ? 'Wallet' : 'Bank'),
+                    last4: newCardType === 'cash' ? 'CASH' : ((document.getElementById('new-card-last4') as HTMLInputElement)?.value || '0000'),
+                    type: newCardType,
                   });
                   setIsAdding(false);
                 }}
