@@ -399,26 +399,42 @@ export function Ledger() {
 
   const parseDate = (dateStr: string, mode: string) => {
     if (!dateStr) return new Date().toISOString().split('T')[0];
+    
+    // Clean up string: remove time part if present (e.g. "15/04/2023 14:30" -> "15/04/2023")
+    const cleanStr = dateStr.toString().trim().split(' ')[0];
+    
     try {
       if (mode === "DD/MM/YYYY") {
-        const parts = dateStr.split(/[-/]/);
-        if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        const parts = cleanStr.split(/[-/]/);
+        if (parts.length >= 3) {
+          const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+          return `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
       } else if (mode === "MM/DD/YYYY") {
-        const parts = dateStr.split(/[-/]/);
-        if (parts.length === 3) return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+        const parts = cleanStr.split(/[-/]/);
+        if (parts.length >= 3) {
+          const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+          return `${year}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+        }
       }
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return new Date().toISOString().split('T')[0];
+      
+      const d = new Date(cleanStr);
+      if (isNaN(d.getTime())) {
+        // Fallback for tricky formats if Date() fails, try DD/MM/YYYY as best guess
+        const parts = cleanStr.split(/[-/]/);
+        if (parts.length >= 3) {
+            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+            return `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+        return new Date().toISOString().split('T')[0];
+      }
       return d.toISOString().split('T')[0];
     } catch {
       return new Date().toISOString().split('T')[0];
     }
   };
 
-  const previewData = useMemo(() => {
-    if (importStep !== "preview") return [];
-    
-    return importData.slice(0, 10).map((row) => {
+  const parseImportRow = (row: any, mapping: ColumnMapping, amountMode: string, dateMode: string, selectedCardId: string) => {
       let amount = 0;
       let isMalformed = false;
       
@@ -474,86 +490,26 @@ export function Ledger() {
         }
       }
       
-      const type = amount >= 0 ? 'income' : 'expense';
-      const desc = mapping.description && row[mapping.description] ? row[mapping.description] : 'Unknown';
-      const dateStr = mapping.date && row[mapping.date] ? row[mapping.date] : '';
-      
-      return {
-        date: parseDate(dateStr, dateMode),
-        description: desc,
-        originalDescription: desc,
-        amount,
-        type,
-        categoryId: 'cat_uncategorized',
-        cardId: selectedCardId || null,
-        tag: 'none',
-        isTransferMatched: false,
-        isMalformed
-      };
-    });
-  }, [importData, mapping, amountMode, dateMode, importStep, selectedCardId]);
-
-  const handleFinalizeImport = () => {
-    const finalData = importData.map((row) => {
-      let amount = 0;
-      let isMalformed = false;
-      
-      if (amountMode === "single" && mapping.amount && row[mapping.amount]) {
-        const parsed = parseFloat(row[mapping.amount].toString().replace(/[^0-9.-]+/g, ""));
-        if (!isNaN(parsed)) amount = parsed;
-        else isMalformed = true;
-      } else if (amountMode === "dual") {
-        const debitStr = mapping.debit && row[mapping.debit] ? row[mapping.debit].toString().trim() : "";
-        const creditStr = mapping.credit && row[mapping.credit] ? row[mapping.credit].toString().trim() : "";
-        
-        const debitRaw = parseFloat(debitStr.replace(/[^0-9.-]+/g, ""));
-        const creditRaw = parseFloat(creditStr.replace(/[^0-9.-]+/g, ""));
-
-        const isDebitValid = !isNaN(debitRaw) && debitStr !== "";
-        const isCreditValid = !isNaN(creditRaw) && creditStr !== "";
-
-        const debitValue = isDebitValid ? Math.abs(debitRaw) : 0;
-        const creditValue = isCreditValid ? Math.abs(creditRaw) : 0;
-
-        if (debitValue > 0 && creditValue > 0) {
-           isMalformed = true;
-           amount = 0;
-        } else if (creditValue > 0) {
-           amount = creditValue;
-        } else if (debitValue > 0) {
-           amount = -debitValue;
-        } else {
-           isMalformed = true;
-           amount = 0;
-        }
-      } else if (amountMode === "direction") {
-        const rawAmount = mapping.amount && row[mapping.amount] ? row[mapping.amount].toString().trim() : "";
-        const dirStr = mapping.direction && row[mapping.direction] ? row[mapping.direction].toString().trim().toLowerCase() : "";
-        
-        const parsed = parseFloat(rawAmount.replace(/[^0-9.-]+/g, ""));
-        
-        if (!isNaN(parsed) && rawAmount !== "") {
-          const isCredit = dirStr === 'cr' || dirStr === 'credit' || dirStr === 'c' || dirStr === 'in' || dirStr === 'deposit';
-          const isDebit = dirStr === 'dr' || dirStr === 'debit' || dirStr === 'd' || dirStr === 'out' || dirStr === 'withdrawal';
-          
-          if (isCredit) {
-            amount = Math.abs(parsed);
-          } else if (isDebit) {
-            amount = -Math.abs(parsed);
-          } else {
-            isMalformed = true;
-            amount = 0;
-          }
-        } else {
-          isMalformed = true;
-          amount = 0;
-        }
-      }
-      
-      const type = amount >= 0 ? 'income' : 'expense';
+      let type = amount >= 0 ? 'income' : 'expense';
       const desc = mapping.description && row[mapping.description] ? row[mapping.description] : 'Unknown';
       const dateStr = mapping.date && row[mapping.date] ? row[mapping.date] : '';
       const notes = mapping.notes && row[mapping.notes] ? row[mapping.notes] : undefined;
+
+      // Credit card payment logic (payments made TO the credit card appear as positive amounts/credits)
+      const descLower = desc.toString().toLowerCase();
+      const isCCPayment = type === 'income' && (
+        descLower.includes('payment received') || 
+        descLower.includes('card payment') || 
+        descLower.includes('payment by transfer') ||
+        descLower.includes('bank payment') ||
+        descLower.includes('cash payment') ||
+        descLower.includes('payment - thank you') ||
+        descLower.includes('autopay')
+      );
+
+      if (isCCPayment) {
+        type = 'transfer';
+      }
       
       return {
         date: parseDate(dateStr, dateMode),
@@ -561,13 +517,26 @@ export function Ledger() {
         originalDescription: desc,
         amount,
         type: type as any,
-        categoryId: 'cat_uncategorized',
+        categoryId: isCCPayment ? 'cat_transfer' : 'cat_uncategorized',
         cardId: selectedCardId || null,
         tag: 'none' as any,
         isTransferMatched: false,
+        isMalformed,
         isReviewed: false,
         notes: isMalformed ? `Malformed amount row in CSV. Please manually update the correct amount.` : notes
       };
+  };
+
+  const previewData = useMemo(() => {
+    return importData.slice(0, 10).map(row => parseImportRow(row, mapping, amountMode, dateMode, selectedCardId));
+  }, [importData, mapping, amountMode, dateMode, selectedCardId]);
+
+  const handleFinalizeImport = () => {
+    const finalData = importData.map(row => {
+      const parsed = parseImportRow(row, mapping, amountMode, dateMode, selectedCardId);
+      // Remove isMalformed for final transaction object (not in schema)
+      const { isMalformed, ...tx } = parsed;
+      return tx;
     });
 
     importTransactions(finalData);

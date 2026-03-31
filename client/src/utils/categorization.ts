@@ -92,6 +92,12 @@ export const DEFAULT_RULES: CategorizationRule[] = [
   { id: 'rule_transf_2', keyword: 'payment received', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
   { id: 'rule_transf_3', keyword: 'atm wd', categoryId: 'cat_cash', tag: 'personal', type: 'expense' },
   { id: 'rule_transf_4', keyword: 'cash deposit', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_5', keyword: 'card payment', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_6', keyword: 'bank payment', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_7', keyword: 'cash payment', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_8', keyword: 'payment - thank you', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_9', keyword: 'payment by transfer', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
+  { id: 'rule_transf_10', keyword: 'autopay', categoryId: 'cat_transfer', tag: 'none', type: 'transfer' },
 
   // Income
   { id: 'rule_inc_1', keyword: 'salary', categoryId: 'cat_salary', tag: 'personal', type: 'income' },
