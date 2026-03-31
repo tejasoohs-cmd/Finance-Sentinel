@@ -25,23 +25,23 @@ export function Dashboard() {
   const cashBalance = cashWallet ? transactions.filter(t => t.cardId === cashWallet.id).reduce((acc, tx) => acc + tx.amount, 0) : 0;
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-primary">Overview</h1>
           <p className="text-muted-foreground">Your financial snapshot for this month.</p>
         </div>
-        <div className="flex gap-2 items-center">
-          <div className="bg-secondary/50 p-1 rounded-xl flex gap-1 mr-4 border border-border">
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="bg-secondary/50 p-1 rounded-xl flex gap-1 mr-2 sm:mr-4 border border-border">
             <button 
               onClick={() => setViewMode("actual")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all ${viewMode === 'actual' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-all ${viewMode === 'actual' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Actual Spend
             </button>
             <button 
               onClick={() => setViewMode("full")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all ${viewMode === 'full' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-all ${viewMode === 'full' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Full Flow
             </button>
@@ -51,7 +51,7 @@ export function Dashboard() {
             onClick={loadDemoData}
             className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors text-sm font-medium"
           >
-            Load Demo Data
+            Demo Data
           </button>
           <button 
             onClick={clearAllData}
@@ -73,58 +73,99 @@ export function Dashboard() {
       )}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="p-6 bg-card border border-border rounded-xl shadow-lg relative overflow-hidden group col-span-1 md:col-span-2 lg:col-span-1">
+        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group col-span-1 md:col-span-2 lg:col-span-1 hover:border-primary/50 transition-colors">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
-            <h3 className="text-sm font-medium text-muted-foreground">Total Net Worth</h3>
-            <Icons.Wallet className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Total Net Worth</h3>
+            <div className="p-2 bg-primary/10 rounded-xl">
+              <Icons.Wallet className="h-5 w-5 text-primary" />
+            </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2">
             {formatCurrency(totalBalance)}
           </div>
         </div>
         
-        <div className="p-6 bg-card border border-border rounded-xl shadow-lg relative overflow-hidden group">
+        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-green-500/50 transition-colors">
           <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
-            <h3 className="text-sm font-medium text-muted-foreground">{viewMode === 'actual' ? 'Real Income' : 'Total Inflow'}</h3>
-            <Icons.TrendingUp className="h-4 w-4 text-green-500" />
+            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Income' : 'Total Inflow'}</h3>
+            <div className="p-2 bg-green-500/10 rounded-xl">
+              <Icons.TrendingUp className="h-5 w-5 text-green-500" />
+            </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2">
             {formatCurrency(income)}
           </div>
         </div>
 
-        <div className="p-6 bg-card border border-border rounded-xl shadow-lg relative overflow-hidden group">
+        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-red-500/50 transition-colors">
           <div className="absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
-            <h3 className="text-sm font-medium text-muted-foreground">{viewMode === 'actual' ? 'Real Expenses' : 'Total Outflow'}</h3>
-            <Icons.TrendingDown className="h-4 w-4 text-red-500" />
+            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Expenses' : 'Total Outflow'}</h3>
+            <div className="p-2 bg-red-500/10 rounded-xl">
+              <Icons.TrendingDown className="h-5 w-5 text-red-500" />
+            </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2">
             {formatCurrency(expenses)}
           </div>
         </div>
 
-        <div className="p-6 bg-card border border-border rounded-xl shadow-lg relative overflow-hidden group">
+        <div className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors bg-gradient-to-br from-yellow-900/10 to-transparent">
           <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
-            <h3 className="text-sm font-medium text-muted-foreground">Cash Wallet</h3>
-            <Icons.Banknote className="h-4 w-4 text-yellow-500" />
+            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Cash Wallet</h3>
+            <div className="p-2 bg-yellow-500/10 rounded-xl">
+              <Icons.Banknote className="h-5 w-5 text-yellow-500" />
+            </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2">
             {formatCurrency(cashBalance)}
           </div>
           {cashWallet && (
-            <p className="text-xs text-muted-foreground mt-1 tracking-wider uppercase">{cashWallet.name}</p>
+            <p className="text-xs text-muted-foreground mt-1 font-medium">{cashWallet.name}</p>
           )}
         </div>
       </div>
       
-      {/* Placeholder for more components */}
-      <div className="h-64 border border-dashed border-border rounded-xl flex flex-col items-center justify-center text-muted-foreground bg-card/50">
-        <Icons.BarChart3 className="w-12 h-12 mb-4 opacity-20" />
-        <p>Analytics & Category breakdown will appear here.</p>
+      {/* Quick Actions & Recent Activity Mockup */}
+      <div className="grid gap-6 md:grid-cols-3">
+         <div className="md:col-span-2 border border-border rounded-3xl bg-card p-6 shadow-lg">
+            <h3 className="font-bold text-lg mb-4">Recent Activity</h3>
+            <div className="space-y-4">
+               {transactions.slice(0, 5).map(tx => (
+                 <div key={tx.id} className="flex justify-between items-center py-2 border-b border-border/50 last:border-0">
+                    <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center">
+                          <Icons.Receipt className="w-5 h-5 text-muted-foreground"/>
+                       </div>
+                       <div>
+                          <p className="font-bold text-sm">{tx.description}</p>
+                          <p className="text-xs text-muted-foreground">{tx.date}</p>
+                       </div>
+                    </div>
+                    <div className={`font-mono font-bold text-sm ${tx.amount > 0 ? 'text-green-500' : 'text-foreground'}`}>
+                       {tx.amount > 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                    </div>
+                 </div>
+               ))}
+               {transactions.length === 0 && (
+                 <p className="text-sm text-muted-foreground text-center py-8">No recent transactions. Go to Ledger to add some.</p>
+               )}
+            </div>
+         </div>
+         
+         <div className="border border-border rounded-3xl bg-card p-6 shadow-lg flex flex-col items-center justify-center text-center">
+             <div className="w-16 h-16 rounded-2xl bg-primary/20 text-primary flex items-center justify-center mb-4">
+                 <Icons.PieChart className="w-8 h-8" />
+             </div>
+             <h3 className="font-bold mb-2">Spending by Category</h3>
+             <p className="text-sm text-muted-foreground mb-6">Connect more transactions to see your monthly category breakdown.</p>
+             <button className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-xl font-bold w-full hover:bg-secondary/80 transition-colors">
+                 View Budgets
+             </button>
+         </div>
       </div>
     </div>
   );
