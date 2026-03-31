@@ -5,135 +5,165 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { Card } from "@/types/finance";
 
 export function Cards() {
-  const { cards, addCard, deleteCard } = useFinanceStore();
+  const { cards, addCard, deleteCard, transactions } = useFinanceStore();
   const [isAdding, setIsAdding] = useState(false);
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">Cards & Accounts</h1>
-          <p className="text-muted-foreground">Manage your payment methods.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-primary">Accounts & Wallets</h1>
+          <p className="text-muted-foreground">Manage your banks, cards, and physical cash.</p>
         </div>
         <button 
           onClick={() => setIsAdding(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium shadow-lg shadow-primary/20"
         >
           <Icons.Plus className="h-4 w-4" />
-          Add Card
+          Add Account
         </button>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {cards.map((card) => (
-          <div 
-            key={card.id} 
-            className="relative p-6 rounded-2xl border border-border shadow-lg overflow-hidden group aspect-[1.58] flex flex-col justify-between"
-            style={{
-              background: `linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--secondary)) 100%)`
-            }}
-          >
-            {/* Card Chip decoration */}
-            <div className="absolute top-6 left-6 w-12 h-9 bg-yellow-600/20 border border-yellow-600/40 rounded flex items-center justify-center overflow-hidden">
-              <div className="w-8 h-6 border border-yellow-600/30 rounded-sm"></div>
-            </div>
-            
-            {/* Delete button (shows on hover) */}
-            <button 
-              onClick={() => deleteCard(card.id)}
-              className="absolute top-4 right-4 p-2 bg-destructive/10 text-destructive rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-destructive hover:text-destructive-foreground z-10"
+        {cards.map((card) => {
+          // Calculate implied balance based on transactions for this card
+          const impliedBalance = transactions.filter(t => t.cardId === card.id).reduce((acc, tx) => acc + tx.amount, 0);
+
+          return (
+            <div 
+              key={card.id} 
+              className={`relative p-6 rounded-2xl border border-border shadow-lg overflow-hidden group aspect-[1.58] flex flex-col justify-between ${
+                card.type === 'cash' ? 'bg-gradient-to-br from-green-900/40 to-green-950/40 border-green-500/30' : ''
+              }`}
+              style={card.type !== 'cash' ? {
+                background: `linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--secondary)) 100%)`
+              } : {}}
             >
-              <Icons.Trash2 className="w-4 h-4" />
-            </button>
+              {card.type !== 'cash' && (
+                <div className="absolute top-6 left-6 w-12 h-9 bg-yellow-600/20 border border-yellow-600/40 rounded flex items-center justify-center overflow-hidden">
+                  <div className="w-8 h-6 border border-yellow-600/30 rounded-sm"></div>
+                </div>
+              )}
 
-            <div className="text-right mt-2">
-              <span className="text-sm font-medium tracking-wider text-muted-foreground uppercase">
-                {card.bank}
-              </span>
-            </div>
-
-            <div className="mt-8 space-y-4">
-              <div className="font-mono text-xl tracking-widest flex items-center gap-4 text-foreground/80">
-                <span>••••</span>
-                <span>••••</span>
-                <span>••••</span>
-                <span className="text-foreground">{card.last4}</span>
-              </div>
+              {card.type === 'cash' && (
+                <div className="absolute top-6 left-6">
+                   <Icons.Banknote className="w-8 h-8 text-green-500/50" />
+                </div>
+              )}
               
-              <div className="flex justify-between items-end">
-                <div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Card Name</div>
-                  <div className="font-medium truncate max-w-[150px]">{card.name}</div>
+              <button 
+                onClick={() => deleteCard(card.id)}
+                className="absolute top-4 right-4 p-2 bg-destructive/10 text-destructive rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-destructive hover:text-destructive-foreground z-10"
+              >
+                <Icons.Trash2 className="w-4 h-4" />
+              </button>
+
+              <div className="text-right mt-2">
+                <span className="text-sm font-medium tracking-wider text-muted-foreground uppercase">
+                  {card.bank}
+                </span>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div className="font-mono text-2xl tracking-tight text-foreground/90 font-bold">
+                  {formatCurrency(impliedBalance)}
                 </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Type</div>
-                  <div className="font-medium capitalize">{card.type}</div>
+                
+                <div className="flex justify-between items-end">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Account Name</div>
+                    <div className="font-medium truncate max-w-[150px]">{card.name}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{card.type !== 'cash' ? 'Last 4' : 'Type'}</div>
+                    <div className="font-medium font-mono tracking-widest">{card.type !== 'cash' ? `•••• ${card.last4}` : 'CASH'}</div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {cards.length === 0 && !isAdding && (
           <div 
             onClick={() => setIsAdding(true)}
-            className="border-2 border-dashed border-border rounded-2xl aspect-[1.58] flex flex-col items-center justify-center text-muted-foreground hover:bg-secondary/30 hover:border-primary/50 hover:text-primary transition-all cursor-pointer cursor-pointer"
+            className="border-2 border-dashed border-border rounded-2xl aspect-[1.58] flex flex-col items-center justify-center text-muted-foreground hover:bg-secondary/30 hover:border-primary/50 hover:text-primary transition-all cursor-pointer"
           >
             <Icons.CreditCard className="w-8 h-8 mb-2 opacity-50" />
-            <span className="font-medium">Add your first card</span>
+            <span className="font-medium">Add your first account</span>
           </div>
         )}
       </div>
 
-      {/* Basic form mockup for adding a card */}
       {isAdding && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border p-6 rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-bold mb-4">Add New Card</h2>
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card border border-border p-6 rounded-3xl shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold mb-6">Add New Account</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">Bank Name</label>
-                <input type="text" placeholder="e.g. ENBD" className="w-full px-3 py-2 bg-background border border-border rounded-lg" id="new-card-bank"/>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Account Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {['credit', 'debit', 'cash'].map(type => (
+                    <label key={type} className={`flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${
+                      (document.getElementById('new-card-type') as HTMLInputElement)?.value === type 
+                        ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20' 
+                        : 'border-border bg-background text-foreground hover:bg-secondary/50'
+                    }`}>
+                      <input type="radio" name="accountType" id="new-card-type" value={type} className="hidden" defaultChecked={type === 'debit'} 
+                        onChange={(e) => {
+                          // trigger re-render hack for UI update
+                          const el = document.getElementById('type-rerender-hack');
+                          if(el) el.innerText = e.target.value;
+                        }}
+                      />
+                      <span className="text-sm font-medium capitalize flex items-center gap-2">
+                        {type === 'cash' ? <Icons.Banknote className="w-4 h-4"/> : <Icons.CreditCard className="w-4 h-4"/>}
+                        {type}
+                      </span>
+                    </label>
+                  ))}
+                  <span id="type-rerender-hack" className="hidden">debit</span>
+                </div>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">Card Name</label>
-                <input type="text" placeholder="e.g. Skywards Infinite" className="w-full px-3 py-2 bg-background border border-border rounded-lg" id="new-card-name"/>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Institution / Bank Name</label>
+                <input type="text" placeholder="e.g. Emirates NBD, Mashreq, Wallet" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-bank"/>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground mb-1">Last 4 Digits</label>
-                  <input type="text" maxLength={4} placeholder="1234" className="w-full px-3 py-2 bg-background border border-border rounded-lg font-mono" id="new-card-last4"/>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground mb-1">Type</label>
-                  <select className="w-full px-3 py-2 bg-background border border-border rounded-lg" id="new-card-type">
-                    <option value="credit">Credit</option>
-                    <option value="debit">Debit</option>
-                    <option value="prepaid">Prepaid</option>
-                  </select>
-                </div>
+              
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Display Name</label>
+                <input type="text" placeholder="e.g. Skywards Infinite" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-name"/>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Last 4 Digits (Optional)</label>
+                <input type="text" maxLength={4} placeholder="1234" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-last4"/>
               </div>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
+            
+            <div className="mt-8 flex justify-end gap-3 pt-4 border-t border-border">
               <button 
                 onClick={() => setIsAdding(false)}
-                className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg"
+                className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-xl hover:bg-secondary/80 transition-colors font-medium"
               >
                 Cancel
               </button>
               <button 
                 onClick={() => {
+                  const type = Array.from(document.getElementsByName('accountType') as NodeListOf<HTMLInputElement>).find(r => r.checked)?.value || 'debit';
+                  
                   addCard({
-                    name: (document.getElementById('new-card-name') as HTMLInputElement).value || 'My Card',
+                    name: (document.getElementById('new-card-name') as HTMLInputElement).value || 'My Account',
                     bank: (document.getElementById('new-card-bank') as HTMLInputElement).value || 'Bank',
-                    last4: (document.getElementById('new-card-last4') as HTMLInputElement).value || '0000',
-                    type: (document.getElementById('new-card-type') as HTMLSelectElement).value as any,
+                    last4: type === 'cash' ? 'CASH' : ((document.getElementById('new-card-last4') as HTMLInputElement).value || '0000'),
+                    type: type as any,
                   });
                   setIsAdding(false);
                 }}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg"
+                className="px-6 py-2.5 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors font-medium shadow-lg shadow-primary/20"
               >
-                Save Card
+                Save Account
               </button>
             </div>
           </div>

@@ -12,6 +12,9 @@ export function Transfers() {
   // Split state
   const [splitAmount1, setSplitAmount1] = useState("");
   const [splitAmount2, setSplitAmount2] = useState("");
+  
+  // Presets state
+  const [showPresets, setShowPresets] = useState(false);
 
   const suspectedTransfers = transactions.filter(t => 
     !t.isTransferMatched && 
@@ -27,20 +30,94 @@ export function Transfers() {
     return card ? `${card.name} (${card.bank})` : "Unknown";
   };
 
+  const applyTransferPreset = (presetName: string) => {
+    // Basic heuristics for common UAE banking patterns
+    const txs = [...transactions];
+    let matchesMade = 0;
+    
+    if (presetName === 'enbd_to_mashreq') {
+      // Find unlinked ENBD outflows and Mashreq inflows around same date/amount
+      const enbdOut = txs.filter(t => !t.isTransferMatched && t.amount < 0 && getCardName(t.cardId).includes('ENBD'));
+      const mashreqIn = txs.filter(t => !t.isTransferMatched && t.amount > 0 && getCardName(t.cardId).includes('Mashreq'));
+      
+      enbdOut.forEach(out => {
+        const match = mashreqIn.find(inc => Math.abs(inc.amount) === Math.abs(out.amount) && Math.abs(new Date(inc.date).getTime() - new Date(out.date).getTime()) <= 3 * 24 * 60 * 60 * 1000);
+        if (match) {
+          linkTransactions(out.id, match.id, 'internal');
+          matchesMade++;
+        }
+      });
+    } else if (presetName === 'atm_to_cash') {
+      // Outflows marked ATM or from Debit cards, matching inflows to Cash wallet
+      const atmOut = txs.filter(t => !t.isTransferMatched && t.amount < 0 && (t.description.toLowerCase().includes('atm') || t.description.toLowerCase().includes('wd')));
+      const cashIn = txs.filter(t => !t.isTransferMatched && t.amount > 0 && getCardName(t.cardId).includes('Cash'));
+      
+      atmOut.forEach(out => {
+        const match = cashIn.find(inc => Math.abs(inc.amount) === Math.abs(out.amount) && Math.abs(new Date(inc.date).getTime() - new Date(out.date).getTime()) <= 1 * 24 * 60 * 60 * 1000);
+        if (match) {
+          linkTransactions(out.id, match.id, 'cash_withdrawal');
+          matchesMade++;
+        }
+      });
+    } else if (presetName === 'cc_payment') {
+      // Outflows from debit to CC inflows
+      const debitOut = txs.filter(t => !t.isTransferMatched && t.amount < 0 && !getCardName(t.cardId).includes('CC') && !getCardName(t.cardId).includes('Credit'));
+      const ccIn = txs.filter(t => !t.isTransferMatched && t.amount > 0 && (getCardName(t.cardId).includes('CC') || getCardName(t.cardId).includes('Credit')));
+      
+      debitOut.forEach(out => {
+        const match = ccIn.find(inc => Math.abs(inc.amount) === Math.abs(out.amount) && Math.abs(new Date(inc.date).getTime() - new Date(out.date).getTime()) <= 3 * 24 * 60 * 60 * 1000);
+        if (match) {
+          linkTransactions(out.id, match.id, 'cc_payment');
+          matchesMade++;
+        }
+      });
+    }
+    
+    alert(`Applied preset. Found and linked ${matchesMade} pairs.`);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-primary">Transfer Queue</h1>
-          <p className="text-muted-foreground">Review internal movements, CC payments, and cash withdrawals.</p>
+          <p className="text-muted-foreground">Review internal movements, CC payments, and cash flows.</p>
         </div>
         <div className="flex gap-2">
+          <div className="relative">
+            <button 
+              onClick={() => setShowPresets(!showPresets)}
+              className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors text-sm font-medium"
+            >
+              <Icons.Zap className="h-4 w-4" />
+              Presets
+            </button>
+            {showPresets && (
+              <div className="absolute right-0 mt-2 w-64 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="p-3 border-b border-border bg-secondary/20">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">UAE Bank Patterns</h3>
+                </div>
+                <div className="p-2 flex flex-col gap-1">
+                  <button onClick={() => { applyTransferPreset('enbd_to_mashreq'); setShowPresets(false); }} className="text-left px-3 py-2 text-sm hover:bg-secondary rounded-lg transition-colors">
+                    Link ENBD → Mashreq
+                  </button>
+                  <button onClick={() => { applyTransferPreset('cc_payment'); setShowPresets(false); }} className="text-left px-3 py-2 text-sm hover:bg-secondary rounded-lg transition-colors">
+                    Link Debit → Credit Card
+                  </button>
+                  <button onClick={() => { applyTransferPreset('atm_to_cash'); setShowPresets(false); }} className="text-left px-3 py-2 text-sm hover:bg-secondary rounded-lg transition-colors">
+                    Link ATM → Cash Wallet
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          
           <button 
             onClick={matchTransfers}
             className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium shadow-lg shadow-primary/20"
           >
             <Icons.Wand2 className="h-4 w-4" />
-            Auto-Match Transfers
+            Auto-Match All
           </button>
         </div>
       </div>
@@ -120,7 +197,7 @@ export function Transfers() {
                           <Icons.Split className="w-3.5 h-3.5" /> Split Row
                         </button>
                         <button 
-                          onClick={() => updateTransaction(tx.id, { isTransferMatched: true, type: 'expense', categoryId: 'cat_other' })}
+                          onClick={() => updateTransaction(tx.id, { isTransferMatched: true, type: tx.amount < 0 ? 'expense' : 'income', categoryId: 'cat_other' })}
                           className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
                           title="Dismiss / Not a transfer"
                         >
@@ -165,7 +242,7 @@ export function Transfers() {
                     <div className="flex justify-between items-center mb-2 px-2">
                       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         {tx1.transferType === 'cc_payment' ? <><Icons.CreditCard className="w-3.5 h-3.5"/> CC Payment</> :
-                         tx1.transferType === 'cash_withdrawal' ? <><Icons.Banknote className="w-3.5 h-3.5"/> Cash Withdrawal</> :
+                         tx1.transferType === 'cash_withdrawal' ? <><Icons.Banknote className="w-3.5 h-3.5"/> Cash Flow</> :
                          <><Icons.ArrowRightLeft className="w-3.5 h-3.5"/> Internal Transfer</>}
                       </div>
                       <button 
@@ -227,7 +304,7 @@ export function Transfers() {
 
                <div className="relative pl-8">
                  <div className="absolute left-0 top-3 w-3 h-3 rounded-full border-2 border-primary bg-background -translate-x-[5px]"></div>
-                 <label className="text-xs font-semibold text-muted-foreground">Part 2 (e.g. Real Expense)</label>
+                 <label className="text-xs font-semibold text-muted-foreground">Part 2 (e.g. Real Expense / Cash)</label>
                  <div className="flex gap-2 mt-1">
                    <input 
                      type="number" 
