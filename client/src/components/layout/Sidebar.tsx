@@ -9,6 +9,7 @@ export function Sidebar() {
     { name: "Dashboard", href: "/", icon: Icons.LayoutDashboard },
     { name: "Ledger", href: "/ledger", icon: Icons.ListOrdered },
     { name: "Accounts", href: "/cards", icon: Icons.CreditCard },
+    { name: "Categories", href: "/categories", icon: Icons.Tags },
     { name: "Transfers", href: "/transfers", icon: Icons.ArrowRightLeft },
     { name: "Export", href: "/export", icon: Icons.FileSpreadsheet },
     { name: "Settings", href: "/settings", icon: Icons.Settings },

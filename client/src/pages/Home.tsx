@@ -24,6 +24,20 @@ export function Dashboard() {
   const cashWallet = cards.find(c => c.type === 'cash');
   const cashBalance = cashWallet ? transactions.filter(t => t.cardId === cashWallet.id).reduce((acc, tx) => acc + tx.amount, 0) : 0;
 
+  const personalTxs = effectiveTxs.filter(t => t.type === 'expense' && t.tag === 'personal');
+  const businessTxs = effectiveTxs.filter(t => t.type === 'expense' && t.tag === 'business');
+  
+  const personalExpenses = personalTxs.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  const businessExpenses = businessTxs.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
+  
+  // Calculate spend by account
+  const accountSpend: Record<string, number> = {};
+  effectiveTxs.filter(t => t.type === 'expense').forEach(tx => {
+     if (tx.cardId) {
+        accountSpend[tx.cardId] = (accountSpend[tx.cardId] || 0) + Math.abs(tx.amount);
+     }
+  });
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -94,7 +108,7 @@ export function Dashboard() {
               <Icons.TrendingUp className="h-5 w-5 text-green-500" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono mt-2">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2 text-green-500">
             {formatCurrency(income)}
           </div>
         </div>
@@ -107,8 +121,18 @@ export function Dashboard() {
               <Icons.TrendingDown className="h-5 w-5 text-red-500" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-foreground font-mono mt-2">
+          <div className="text-3xl font-bold text-foreground font-mono mt-2 text-foreground">
             {formatCurrency(expenses)}
+          </div>
+          <div className="flex gap-4 mt-4 pt-4 border-t border-border">
+             <div>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Personal</p>
+                <p className="font-mono font-bold text-sm">{formatCurrency(personalExpenses)}</p>
+             </div>
+             <div>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Business</p>
+                <p className="font-mono font-bold text-sm">{formatCurrency(businessExpenses)}</p>
+             </div>
           </div>
         </div>
 
@@ -158,13 +182,20 @@ export function Dashboard() {
          
          <div className="border border-border rounded-3xl bg-card p-6 shadow-lg flex flex-col items-center justify-center text-center">
              <div className="w-16 h-16 rounded-2xl bg-primary/20 text-primary flex items-center justify-center mb-4">
-                 <Icons.PieChart className="w-8 h-8" />
+                 <Icons.CreditCard className="w-8 h-8" />
              </div>
-             <h3 className="font-bold mb-2">Spending by Category</h3>
-             <p className="text-sm text-muted-foreground mb-6">Connect more transactions to see your monthly category breakdown.</p>
-             <button className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-xl font-bold w-full hover:bg-secondary/80 transition-colors">
-                 View Budgets
-             </button>
+             <h3 className="font-bold mb-2">Spend by Account</h3>
+             <div className="w-full space-y-2 mt-4 text-left">
+                {Object.entries(accountSpend).sort((a,b) => b[1] - a[1]).slice(0,3).map(([cardId, amount]) => {
+                   const c = cards.find(c => c.id === cardId);
+                   return (
+                     <div key={cardId} className="flex justify-between text-sm items-center">
+                        <span className="text-muted-foreground truncate pr-2">{c?.name || 'Unknown'}</span>
+                        <span className="font-mono font-bold">{formatCurrency(amount)}</span>
+                     </div>
+                   );
+                })}
+             </div>
          </div>
       </div>
     </div>

@@ -197,7 +197,10 @@ export function Transfers() {
                           <Icons.Split className="w-3.5 h-3.5" /> Split Row
                         </button>
                         <button 
-                          onClick={() => updateTransaction(tx.id, { isTransferMatched: true, type: tx.amount < 0 ? 'expense' : 'income', categoryId: 'cat_other' })}
+                          onClick={() => {
+                             const { updateTransaction } = useFinanceStore.getState();
+                             updateTransaction(tx.id, { isTransferMatched: true, type: tx.amount < 0 ? 'expense' : 'income', categoryId: 'cat_other' });
+                          }}
                           className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
                           title="Dismiss / Not a transfer"
                         >

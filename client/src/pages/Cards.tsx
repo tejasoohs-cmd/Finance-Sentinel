@@ -146,19 +146,19 @@ export function Cards() {
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Account Type</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {(['credit', 'debit', 'cash'] as const).map(type => (
+                  {(['debit', 'credit', 'cash'] as const).map(type => (
                     <button 
                       key={type} 
                       type="button"
-                      onClick={() => setNewCardType(type)}
+                      onClick={(e) => { e.preventDefault(); setNewCardType(type); }}
                       className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${
                         newCardType === type 
-                          ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20' 
+                          ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary/20 shadow-md' 
                           : 'border-border bg-background text-foreground hover:bg-secondary/50'
                       }`}
                     >
                       {type === 'cash' ? <Icons.Banknote className="w-5 h-5 mb-1"/> : <Icons.CreditCard className="w-5 h-5 mb-1"/>}
-                      <span className="text-xs font-medium capitalize">{type}</span>
+                      <span className="text-xs font-bold capitalize">{type}</span>
                     </button>
                   ))}
                 </div>
