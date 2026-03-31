@@ -2,12 +2,13 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { Transaction, Card, Category, Budget, DEFAULT_CATEGORIES, TransactionTag } from '../types/finance';
-import { parseISO, format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format } from 'date-fns';
 
 interface FinanceState {
   transactions: Transaction[];
   cards: Card[];
   categories: Category[];
+  tags: string[];
   budgets: Budget[];
   
   // Actions
@@ -20,6 +21,13 @@ interface FinanceState {
   updateCard: (id: string, card: Partial<Card>) => void;
   deleteCard: (id: string) => void;
   
+  addCategory: (category: Omit<Category, 'id'>) => void;
+  updateCategory: (id: string, category: Partial<Category>) => void;
+  deleteCategory: (id: string) => void;
+
+  addTag: (tag: string) => void;
+  deleteTag: (tag: string) => void;
+
   addBudget: (budget: Omit<Budget, 'id'>) => void;
   updateBudget: (id: string, budget: Partial<Budget>) => void;
   deleteBudget: (id: string) => void;
@@ -27,6 +35,9 @@ interface FinanceState {
   matchTransfers: () => void;
   clearAllData: () => void;
   loadDemoData: () => void;
+
+  bulkUpdateTransactions: (ids: string[], updates: Partial<Transaction>) => void;
+  bulkDeleteTransactions: (ids: string[]) => void;
 }
 
 export const useFinanceStore = create<FinanceState>()(
@@ -35,6 +46,7 @@ export const useFinanceStore = create<FinanceState>()(
       transactions: [],
       cards: [],
       categories: DEFAULT_CATEGORIES,
+      tags: ['none', 'personal', 'business'],
       budgets: [],
 
       addTransaction: (tx) => set((state) => ({
@@ -68,8 +80,29 @@ export const useFinanceStore = create<FinanceState>()(
 
       deleteCard: (id) => set((state) => ({
         cards: state.cards.filter((card) => card.id !== id),
-        // Detach card from transactions
         transactions: state.transactions.map(tx => tx.cardId === id ? { ...tx, cardId: null } : tx)
+      })),
+
+      addCategory: (category) => set((state) => ({
+        categories: [...state.categories, { ...category, id: `cat_custom_${uuidv4()}`, isCustom: true }]
+      })),
+
+      updateCategory: (id, categoryUpdate) => set((state) => ({
+        categories: state.categories.map((c) => c.id === id ? { ...c, ...categoryUpdate } : c)
+      })),
+
+      deleteCategory: (id) => set((state) => ({
+        categories: state.categories.filter((c) => c.id !== id),
+        transactions: state.transactions.map(tx => tx.categoryId === id ? { ...tx, categoryId: 'cat_uncategorized' } : tx)
+      })),
+
+      addTag: (tag) => set((state) => ({
+        tags: state.tags.includes(tag.toLowerCase()) ? state.tags : [...state.tags, tag.toLowerCase()]
+      })),
+
+      deleteTag: (tag) => set((state) => ({
+        tags: state.tags.filter(t => t !== tag),
+        transactions: state.transactions.map(tx => tx.tag === tag ? { ...tx, tag: 'none' } : tx)
       })),
 
       addBudget: (budget) => set((state) => ({
@@ -84,8 +117,15 @@ export const useFinanceStore = create<FinanceState>()(
         budgets: state.budgets.filter((b) => b.id !== id)
       })),
 
+      bulkUpdateTransactions: (ids, updates) => set((state) => ({
+        transactions: state.transactions.map(tx => ids.includes(tx.id) ? { ...tx, ...updates } : tx)
+      })),
+
+      bulkDeleteTransactions: (ids) => set((state) => ({
+        transactions: state.transactions.filter(tx => !ids.includes(tx.id))
+      })),
+
       matchTransfers: () => set((state) => {
-        // Find opposing transactions with same amount, close dates (within 3 days), and mark them
         const transactions = [...state.transactions];
         
         for (let i = 0; i < transactions.length; i++) {
@@ -96,8 +136,6 @@ export const useFinanceStore = create<FinanceState>()(
             const t2 = transactions[j];
             if (t2.isTransferMatched) continue;
 
-            // Same amount but opposite sign (in our system, expenses are usually negative or we just check absolute equality depending on how we store it)
-            // Assuming expenses are stored as negative and income as positive
             const isOpposite = (t1.amount === -t2.amount) || (Math.abs(t1.amount) === Math.abs(t2.amount) && t1.type !== t2.type);
             
             if (isOpposite) {
@@ -106,7 +144,6 @@ export const useFinanceStore = create<FinanceState>()(
               const diffDays = Math.abs(d1.getTime() - d2.getTime()) / (1000 * 3600 * 24);
               
               if (diffDays <= 3) {
-                // Match found
                 transactions[i] = { ...t1, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t2.id };
                 transactions[j] = { ...t2, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t1.id };
                 break;
@@ -121,10 +158,12 @@ export const useFinanceStore = create<FinanceState>()(
       clearAllData: () => set({
         transactions: [],
         cards: [],
-        budgets: []
+        budgets: [],
+        categories: DEFAULT_CATEGORIES,
+        tags: ['none', 'personal', 'business']
       }),
 
-      loadDemoData: () => set(() => {
+      loadDemoData: () => set((state) => {
         const demoCardId1 = uuidv4();
         const demoCardId2 = uuidv4();
         
@@ -178,7 +217,9 @@ export const useFinanceStore = create<FinanceState>()(
 
         return {
           cards: demoCards,
-          transactions: demoTransactions
+          transactions: demoTransactions,
+          categories: state.categories?.length > 0 ? state.categories : DEFAULT_CATEGORIES,
+          tags: state.tags?.length > 0 ? state.tags : ['none', 'personal', 'business']
         };
       })
     }),
