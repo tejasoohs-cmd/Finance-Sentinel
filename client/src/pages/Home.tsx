@@ -45,6 +45,14 @@ export function Dashboard() {
      }
   });
 
+  // Action Items
+  const unreviewedCount = transactions.filter(t => !t.isReviewed).length;
+  const uncategorizedCount = transactions.filter(t => t.categoryId === 'cat_uncategorized').length;
+  const unmatchedTransfersCount = transactions.filter(t => t.type === 'transfer' && !t.isTransferMatched).length;
+  const cashItemsNeedingReview = transactions.filter(t => t.cardId === cashWallet?.id && !t.isReviewed).length;
+  
+  const needsAttention = unreviewedCount > 0 || uncategorizedCount > 0 || unmatchedTransfersCount > 0 || cashItemsNeedingReview > 0;
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -90,6 +98,53 @@ export function Dashboard() {
           <p className="text-sm font-medium">
             <strong>Actual Spend Mode:</strong> Internal transfers, credit card payments, and cash withdrawals are excluded from these totals to show your true net worth growth and real spending.
           </p>
+        </div>
+      )}
+
+      {needsAttention && (
+        <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 mb-6">
+           <h3 className="font-bold text-orange-500 flex items-center gap-2 mb-3">
+             <Icons.AlertCircle className="w-5 h-5" />
+             Items Needing Attention
+           </h3>
+           <div className="flex flex-wrap gap-3">
+             {unreviewedCount > 0 && (
+               <button 
+                 onClick={() => navigateToLedger({ view: 'unreviewed' })}
+                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
+               >
+                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unreviewedCount}</span>
+                  Unreviewed Transactions
+               </button>
+             )}
+             {uncategorizedCount > 0 && (
+               <button 
+                 onClick={() => navigateToLedger({ category: 'cat_uncategorized' })}
+                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
+               >
+                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{uncategorizedCount}</span>
+                  Uncategorized
+               </button>
+             )}
+             {unmatchedTransfersCount > 0 && (
+               <button 
+                 onClick={() => navigateToLedger({ type: 'transfer' })}
+                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
+               >
+                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unmatchedTransfersCount}</span>
+                  Unmatched Transfers
+               </button>
+             )}
+             {cashItemsNeedingReview > 0 && (
+               <button 
+                 onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id, view: 'unreviewed' })}
+                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
+               >
+                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{cashItemsNeedingReview}</span>
+                  Cash to Review
+               </button>
+             )}
+           </div>
         </div>
       )}
 

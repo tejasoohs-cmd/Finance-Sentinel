@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useFinanceStore } from "@/store/financeStore";
 import * as Icons from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -7,19 +7,67 @@ import { Card } from "@/types/finance";
 export function Cards() {
   const { cards, addCard, deleteCard, transactions, updateCard } = useFinanceStore();
   const [isAdding, setIsAdding] = useState(false);
-  const [newCardType, setNewCardType] = useState<'credit' | 'debit' | 'cash'>('debit');
   const [editingCard, setEditingCard] = useState<Card | null>(null);
+
+  // Form state
+  const [newCardType, setNewCardType] = useState<'credit' | 'debit' | 'cash'>('debit');
+  const [bank, setBank] = useState("");
+  const [name, setName] = useState("");
+  const [last4, setLast4] = useState("");
+  const [statementDate, setStatementDate] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
 
   const handleOpenAdd = () => {
     setNewCardType('debit');
-    setIsAdding(true);
     setEditingCard(null);
+    setBank("");
+    setName("");
+    setLast4("");
+    setStatementDate("");
+    setDueDate("");
+    setCreditLimit("");
+    setIsAdding(true);
   };
 
   const handleOpenEdit = (card: Card) => {
     setNewCardType(card.type as any);
     setEditingCard(card);
+    setBank(card.bank || "");
+    setName(card.name || "");
+    setLast4(card.last4 === 'CASH' ? '' : (card.last4 || ""));
+    setStatementDate(card.statementDate?.toString() || "");
+    setDueDate(card.dueDate?.toString() || "");
+    setCreditLimit(card.creditLimit?.toString() || "");
     setIsAdding(true);
+  };
+
+  const handleSave = () => {
+    const finalName = name || (newCardType === 'cash' ? 'My Cash' : 'My Account');
+    const finalBank = bank || (newCardType === 'cash' ? 'Wallet' : 'Bank');
+    const finalLast4 = newCardType === 'cash' ? 'CASH' : (last4 || '0000');
+    
+    const updateData: Partial<Card> = {
+      name: finalName,
+      bank: finalBank,
+      last4: finalLast4,
+      type: newCardType,
+    };
+
+    if (newCardType === 'credit') {
+      if (statementDate) updateData.statementDate = parseInt(statementDate);
+      if (dueDate) updateData.dueDate = parseInt(dueDate);
+      if (creditLimit) updateData.creditLimit = parseFloat(creditLimit);
+    }
+
+    if (editingCard) {
+      updateCard(editingCard.id, updateData);
+    } else {
+      addCard(updateData as Omit<Card, 'id'>);
+    }
+    
+    setIsAdding(false);
+    setEditingCard(null);
   };
 
   return (
@@ -166,18 +214,18 @@ export function Cards() {
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Institution / Bank Name</label>
-                <input type="text" defaultValue={editingCard?.bank || ''} placeholder={newCardType === 'cash' ? "e.g. Wallet, Safe" : "e.g. Emirates NBD, Mashreq"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-bank"/>
+                <input type="text" value={bank} onChange={e => setBank(e.target.value)} placeholder={newCardType === 'cash' ? "e.g. Wallet, Safe" : "e.g. Emirates NBD, Mashreq"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" />
               </div>
               
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Display Name</label>
-                <input type="text" defaultValue={editingCard?.name || ''} placeholder={newCardType === 'cash' ? "e.g. Daily Cash" : "e.g. Skywards Infinite"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-name"/>
+                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={newCardType === 'cash' ? "e.g. Daily Cash" : "e.g. Skywards Infinite"} className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" />
               </div>
               
               {newCardType !== 'cash' && (
                 <div className="animate-in slide-in-from-top-2 duration-200 fade-in">
                   <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Last 4 Digits (Optional)</label>
-                  <input type="text" defaultValue={editingCard?.last4 !== 'CASH' ? editingCard?.last4 : ''} maxLength={4} placeholder="1234" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-last4"/>
+                  <input type="text" value={last4} onChange={e => setLast4(e.target.value)} maxLength={4} placeholder="1234" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" />
                 </div>
               )}
 
@@ -185,15 +233,15 @@ export function Cards() {
                 <div className="grid grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200 fade-in border-t border-border pt-4 mt-2">
                   <div>
                     <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Statement Date</label>
-                    <input type="number" min="1" max="31" defaultValue={editingCard?.statementDate || ''} placeholder="1-31" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-statement"/>
+                    <input type="number" min="1" max="31" value={statementDate} onChange={e => setStatementDate(e.target.value)} placeholder="1-31" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Due Date</label>
-                    <input type="number" min="1" max="31" defaultValue={editingCard?.dueDate || ''} placeholder="1-31" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" id="new-card-due"/>
+                    <input type="number" min="1" max="31" value={dueDate} onChange={e => setDueDate(e.target.value)} placeholder="1-31" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Credit Limit</label>
-                    <input type="number" defaultValue={editingCard?.creditLimit || ''} placeholder="AED" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm font-mono" id="new-card-limit"/>
+                    <input type="number" value={creditLimit} onChange={e => setCreditLimit(e.target.value)} placeholder="AED" className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm font-mono" />
                   </div>
                 </div>
               )}
@@ -207,36 +255,7 @@ export function Cards() {
                 Cancel
               </button>
               <button 
-                onClick={() => {
-                  const nameVal = (document.getElementById('new-card-name') as HTMLInputElement).value || (newCardType === 'cash' ? 'My Cash' : 'My Account');
-                  const bankVal = (document.getElementById('new-card-bank') as HTMLInputElement).value || (newCardType === 'cash' ? 'Wallet' : 'Bank');
-                  const last4Val = newCardType === 'cash' ? 'CASH' : ((document.getElementById('new-card-last4') as HTMLInputElement)?.value || '0000');
-                  
-                  const updateData: Partial<Card> = {
-                    name: nameVal,
-                    bank: bankVal,
-                    last4: last4Val,
-                    type: newCardType,
-                  };
-
-                  if (newCardType === 'credit') {
-                    const sd = (document.getElementById('new-card-statement') as HTMLInputElement)?.value;
-                    const dd = (document.getElementById('new-card-due') as HTMLInputElement)?.value;
-                    const cl = (document.getElementById('new-card-limit') as HTMLInputElement)?.value;
-                    if (sd) updateData.statementDate = parseInt(sd);
-                    if (dd) updateData.dueDate = parseInt(dd);
-                    if (cl) updateData.creditLimit = parseFloat(cl);
-                  }
-
-                  if (editingCard) {
-                    updateCard(editingCard.id, updateData);
-                  } else {
-                    addCard(updateData as Omit<Card, 'id'>);
-                  }
-                  
-                  setIsAdding(false);
-                  setEditingCard(null);
-                }}
+                onClick={handleSave}
                 className="px-6 py-2.5 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors font-medium shadow-lg shadow-primary/20"
               >
                 {editingCard ? 'Save Changes' : 'Save Account'}

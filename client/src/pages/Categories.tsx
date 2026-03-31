@@ -7,6 +7,30 @@ export function Categories() {
   const { categories, addCategory, updateCategory, deleteCategory } = useFinanceStore();
   const [isAdding, setIsAdding] = useState(false);
   const [editingCat, setEditingCat] = useState<Category | null>(null);
+
+  // Form State
+  const [name, setName] = useState("");
+  const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense');
+  const [color, setColor] = useState("#3b82f6");
+  const [icon, setIcon] = useState("Tag");
+
+  const openAdd = () => {
+    setEditingCat(null);
+    setName("");
+    setType("expense");
+    setColor("#3b82f6");
+    setIcon("Tag");
+    setIsAdding(true);
+  };
+
+  const openEdit = (c: Category) => {
+    setEditingCat(c);
+    setName(c.name);
+    setType(c.type as any);
+    setColor(c.color);
+    setIcon(c.icon);
+    setIsAdding(true);
+  };
   
   // Group categories
   const expenseCats = categories.filter(c => c.type === 'expense');
@@ -15,11 +39,6 @@ export function Categories() {
 
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const name = formData.get('name') as string;
-    const type = formData.get('type') as 'expense' | 'income' | 'transfer';
-    const color = formData.get('color') as string || '#3b82f6';
-    const icon = formData.get('icon') as string || 'Tag';
 
     if (editingCat) {
       updateCategory(editingCat.id, { name, type, color, icon });
@@ -55,7 +74,7 @@ export function Categories() {
               {c.isCustom && (
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button 
-                    onClick={() => { setEditingCat(c); setIsAdding(true); }}
+                    onClick={() => openEdit(c)}
                     className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
                   >
                     <Icons.Edit2 className="w-4 h-4" />
@@ -87,7 +106,7 @@ export function Categories() {
           <p className="text-muted-foreground">Manage your custom spending and income categories.</p>
         </div>
         <button 
-          onClick={() => { setEditingCat(null); setIsAdding(true); }}
+          onClick={openAdd}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium shadow-lg shadow-primary/20"
         >
           <Icons.Plus className="h-4 w-4" />
@@ -111,7 +130,8 @@ export function Categories() {
                   type="text" 
                   name="name"
                   required
-                  defaultValue={editingCat?.name || ''} 
+                  value={name} 
+                  onChange={e => setName(e.target.value)}
                   placeholder="e.g. Coffee" 
                   className="w-full px-4 py-3 bg-secondary/30 border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm" 
                 />
@@ -122,7 +142,14 @@ export function Categories() {
                 <div className="flex bg-secondary/30 p-1 rounded-xl border border-border">
                    {(['expense', 'income', 'transfer'] as const).map(t => (
                       <label key={t} className="flex-1 cursor-pointer">
-                        <input type="radio" name="type" value={t} defaultChecked={editingCat ? editingCat.type === t : t === 'expense'} className="peer hidden" />
+                        <input 
+                          type="radio" 
+                          name="type" 
+                          value={t} 
+                          checked={type === t} 
+                          onChange={() => setType(t)}
+                          className="peer hidden" 
+                        />
                         <div className="text-center py-2 text-sm font-bold text-muted-foreground peer-checked:bg-card peer-checked:text-foreground peer-checked:shadow rounded-lg transition-all capitalize">
                           {t}
                         </div>
@@ -138,17 +165,15 @@ export function Categories() {
                     <input 
                       type="color" 
                       name="color"
-                      defaultValue={editingCat?.color || '#3b82f6'} 
+                      value={color} 
+                      onChange={e => setColor(e.target.value)}
                       className="h-10 w-10 rounded cursor-pointer bg-transparent border-0 p-0" 
                     />
                     <input 
                       type="text" 
-                      defaultValue={editingCat?.color || '#3b82f6'} 
+                      value={color} 
+                      onChange={e => setColor(e.target.value)}
                       className="flex-1 px-3 py-2 bg-secondary/30 border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm font-mono" 
-                      onChange={(e) => {
-                        const colorInput = e.target.previousElementSibling as HTMLInputElement;
-                        if(colorInput) colorInput.value = e.target.value;
-                      }}
                     />
                   </div>
                 </div>
@@ -157,7 +182,8 @@ export function Categories() {
                   <input 
                     type="text" 
                     name="icon"
-                    defaultValue={editingCat?.icon || 'Tag'} 
+                    value={icon} 
+                    onChange={e => setIcon(e.target.value)}
                     placeholder="Lucide Icon name"
                     className="w-full px-3 py-2.5 bg-secondary/30 border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm font-mono mt-1" 
                   />

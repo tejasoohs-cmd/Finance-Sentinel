@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useFinanceStore } from "@/store/financeStore";
 import { formatCurrency } from "@/lib/utils";
 import * as Icons from "lucide-react";
@@ -7,6 +7,7 @@ import { useLocation } from "wouter";
 export function Reports() {
   const { transactions, categories, cards } = useFinanceStore();
   const [, setLocation] = useLocation();
+  const [selectedMonth, setSelectedMonth] = useState<string>("all");
 
   const navigateToLedger = (params: Record<string, string>) => {
     const query = new URLSearchParams({ view: 'all', ...params }).toString();
@@ -17,9 +18,17 @@ export function Reports() {
   const getCategoryName = (id: string) => categories.find(c => c.id === id)?.name || 'Unknown';
   const getCardName = (id: string) => cards.find(c => c.id === id)?.name || 'Unknown';
 
+  const months = useMemo(() => {
+     return Array.from(new Set(transactions.map(t => t.date.substring(0, 7)))).sort().reverse();
+  }, [transactions]);
+
   const stats = useMemo(() => {
     // We base reports on "Actual" money flow, so we ignore matched internal transfers.
-    const actualTxs = transactions.filter(t => !t.isTransferMatched);
+    let actualTxs = transactions.filter(t => !t.isTransferMatched);
+    
+    if (selectedMonth !== 'all') {
+       actualTxs = actualTxs.filter(t => t.date.startsWith(selectedMonth));
+    }
 
     let income = 0;
     let expense = 0;
@@ -59,13 +68,28 @@ export function Reports() {
       byAccount: Object.entries(byAccount).sort((a, b) => b[1] - a[1]),
       cashSpend
     };
-  }, [transactions, cards]);
+  }, [transactions, cards, selectedMonth]);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-primary">Reports</h1>
-        <p className="text-muted-foreground">Detailed breakdown of your financial activity.</p>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-primary">Reports</h1>
+          <p className="text-muted-foreground">Detailed breakdown of your financial activity.</p>
+        </div>
+        <div className="flex items-center gap-2">
+           <Icons.Calendar className="w-5 h-5 text-muted-foreground" />
+           <select 
+             value={selectedMonth}
+             onChange={e => setSelectedMonth(e.target.value)}
+             className="px-4 py-2.5 bg-secondary/30 border border-border rounded-xl text-sm font-bold focus:outline-none"
+           >
+             <option value="all">All Time</option>
+             {months.map(m => (
+               <option key={m} value={m}>{new Date(`${m}-01`).toLocaleDateString('default', { month: 'long', year: 'numeric' })}</option>
+             ))}
+           </select>
+        </div>
       </div>
 
       {/* High-Level Overview */}
@@ -119,8 +143,14 @@ export function Reports() {
                     className="group cursor-pointer"
                   >
                     <div className="flex justify-between text-sm mb-1">
-                      <span className="font-medium group-hover:text-primary transition-colors">{getCategoryName(categoryId)}</span>
-                      <span className="font-mono font-bold">{formatCurrency(amount)}</span>
+                      <span className="font-medium group-hover:text-primary transition-colors flex items-center gap-2">
+                        {getCategoryName(categoryId)}
+                        {percent > 20 && <span className="bg-orange-500/20 text-orange-500 px-1.5 rounded text-[10px] uppercase font-bold tracking-wider">Top Spend</span>}
+                      </span>
+                      <div className="text-right">
+                         <span className="font-mono font-bold">{formatCurrency(amount)}</span>
+                         <span className="text-xs text-muted-foreground ml-2">({percent.toFixed(1)}%)</span>
+                      </div>
                     </div>
                     <div className="w-full bg-secondary rounded-full h-2 overflow-hidden flex">
                       <div 

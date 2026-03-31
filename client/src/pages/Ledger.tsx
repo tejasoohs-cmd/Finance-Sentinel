@@ -731,9 +731,19 @@ export function Ledger() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center" onClick={e => e.stopPropagation()}>
                         <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {!tx.isReviewed && (
+                             <button 
+                               onClick={() => updateTransaction(tx.id, { isReviewed: true })}
+                               className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-lg transition-colors"
+                               title="Mark as Reviewed"
+                             >
+                               <Icons.CheckCircle2 className="w-4 h-4" />
+                             </button>
+                          )}
                           <button 
                             onClick={() => setEditingTx(tx)}
                             className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                            title="Edit Transaction"
                           >
                             <Icons.Edit2 className="w-4 h-4" />
                           </button>
@@ -742,6 +752,7 @@ export function Ledger() {
                               if(confirm('Delete transaction?')) deleteTransaction(tx.id);
                             }}
                             className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                            title="Delete Transaction"
                           >
                             <Icons.Trash2 className="w-4 h-4" />
                           </button>
