@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import { scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { scrypt, randomBytes, timingSafeEqual, randomUUID } from "crypto";
 import { promisify } from "util";
 import connectPgSimple from "connect-pg-simple";
 import { storage } from "./storage";
@@ -314,10 +314,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/transactions/import", requireAuth, async (req, res) => {
     try {
       const { transactions: txs } = req.body;
-      const created = await storage.createTransactions((req.user as any).id, txs);
+      if (!Array.isArray(txs) || txs.length === 0) {
+        return res.status(400).json({ message: "No transactions provided" });
+      }
+      // Sanitize and validate each transaction before hitting the DB
+      const sanitized = txs.map((tx: any) => {
+        const row: Record<string, any> = {};
+        // Required fields — fall back to safe defaults rather than letting nulls hit NOT NULL columns
+        row.id          = tx.id || randomUUID();
+        row.date        = typeof tx.date === 'string' && tx.date ? tx.date : new Date().toISOString().split('T')[0];
+        row.description = typeof tx.description === 'string' && tx.description ? tx.description : 'Unknown';
+        row.originalDescription = typeof tx.originalDescription === 'string' && tx.originalDescription
+          ? tx.originalDescription : row.description;
+        row.amount      = typeof tx.amount === 'number' && isFinite(tx.amount) ? tx.amount : 0;
+        row.type        = ['expense', 'income', 'transfer'].includes(tx.type) ? tx.type : (row.amount >= 0 ? 'income' : 'expense');
+        row.categoryId  = typeof tx.categoryId === 'string' && tx.categoryId ? tx.categoryId : 'cat_uncategorized';
+        row.tag         = typeof tx.tag === 'string' && tx.tag ? tx.tag : 'none';
+        row.createdAt   = typeof tx.createdAt === 'number' ? tx.createdAt : Date.now();
+        // Optional / nullable fields
+        row.cardId            = typeof tx.cardId === 'string' && tx.cardId ? tx.cardId : null;
+        row.isTransferMatched = tx.isTransferMatched === true;
+        row.transferMatchId   = tx.transferMatchId || null;
+        row.transferType      = tx.transferType || null;
+        row.parentId          = tx.parentId || null;
+        row.isReviewed        = tx.isReviewed === true;
+        row.notes             = typeof tx.notes === 'string' && tx.notes ? tx.notes : null;
+        return row;
+      });
+      console.log(`[import] Attempting to insert ${sanitized.length} transactions for user ${(req.user as any).id}`);
+      if (sanitized.length > 0) {
+        const s = sanitized[0];
+        console.log(`[import] Sample row: date="${s.date}" desc="${String(s.description).slice(0,40)}" amount=${s.amount} type="${s.type}" cardId="${s.cardId}" tag="${s.tag}"`);
+      }
+      const created = await storage.createTransactions((req.user as any).id, sanitized as any);
+      console.log(`[import] Inserted ${created.length} transactions (${sanitized.length - created.length} skipped as duplicates)`);
       res.status(201).json(created);
-    } catch (err) {
-      res.status(500).json({ message: "Failed to import transactions" });
+    } catch (err: any) {
+      console.error('[import] Failed to insert transactions:', err?.message || err);
+      if (err?.detail) console.error('[import] DB detail:', err.detail);
+      res.status(500).json({ message: `Import failed: ${err?.message || 'Unknown server error'}` });
     }
   });
 

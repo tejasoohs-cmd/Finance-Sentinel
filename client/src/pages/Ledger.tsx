@@ -299,6 +299,8 @@ export function Ledger() {
   const [amountMode, setAmountMode] = useState<"single" | "dual" | "direction">("single");
   const [dateMode, setDateMode] = useState<"DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD" | "DD MMM YYYY" | "auto">("auto");
   const [selectedCardId, setSelectedCardId] = useState<string>("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -583,7 +585,7 @@ export function Ledger() {
     return importData.slice(0, 10).map(row => parseImportRow(row, mapping, amountMode, dateMode, selectedCardId));
   }, [importData, mapping, amountMode, dateMode, selectedCardId]);
 
-  const handleFinalizeImport = () => {
+  const handleFinalizeImport = async () => {
     const finalData = importData.map(row => {
       const parsed = parseImportRow(row, mapping, amountMode, dateMode, selectedCardId);
       // Remove isMalformed for final transaction object (not in schema)
@@ -591,11 +593,21 @@ export function Ledger() {
       return tx;
     });
 
-    importTransactions(finalData);
-    setIsImportWizardOpen(false);
-    setImportStep("upload");
-    setImportData([]);
-    setMapping({});
+    setIsImporting(true);
+    setImportError(null);
+    try {
+      await importTransactions(finalData);
+      // Only close the wizard on success
+      setIsImportWizardOpen(false);
+      setImportStep("upload");
+      setImportData([]);
+      setMapping({});
+    } catch (err: any) {
+      // Keep wizard open and display the server's error message
+      setImportError(err?.message || 'Import failed. Please try again.');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const isMappingValid = mapping.date && mapping.description && (
@@ -1171,7 +1183,7 @@ export function Ledger() {
 
             </div>
 
-            <div className="mt-6 pt-6 border-t border-border flex justify-between items-center">
+            <div className={`mt-6 pt-6 border-t border-border flex ${importStep === "mapping" ? "justify-between items-center" : "flex-col gap-3 items-stretch"}`}>
               {importStep === "mapping" ? (
                 <>
                   <span className="text-sm text-muted-foreground font-medium">
@@ -1195,19 +1207,33 @@ export function Ledger() {
                 </>
               ) : (
                 <>
-                  <button 
-                    onClick={() => setImportStep("mapping")}
-                    className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-xl hover:bg-secondary/80 transition-colors font-bold flex items-center gap-2"
-                  >
-                    <Icons.ArrowLeft className="w-4 h-4" /> Back to Mapping
-                  </button>
-                  <button 
-                    onClick={handleFinalizeImport}
-                    className="px-6 py-2.5 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-colors font-bold shadow-lg shadow-green-500/20 flex items-center gap-2"
-                  >
-                    <Icons.Check className="w-5 h-5" />
-                    Import {importData.length} Transactions
-                  </button>
+                  {importError && (
+                    <div className="w-full px-4 py-3 bg-destructive/15 border border-destructive/30 rounded-xl text-destructive text-sm flex items-start gap-2 mb-1" data-testid="import-error-message">
+                      <Icons.AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <span>{importError}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3 w-full justify-between">
+                    <button 
+                      onClick={() => { setImportStep("mapping"); setImportError(null); }}
+                      disabled={isImporting}
+                      className="px-6 py-2.5 bg-secondary text-secondary-foreground rounded-xl hover:bg-secondary/80 transition-colors font-bold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Icons.ArrowLeft className="w-4 h-4" /> Back to Mapping
+                    </button>
+                    <button 
+                      onClick={handleFinalizeImport}
+                      disabled={isImporting}
+                      data-testid="button-finalize-import"
+                      className="px-6 py-2.5 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-colors font-bold shadow-lg shadow-green-500/20 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isImporting ? (
+                        <><Icons.Loader2 className="w-5 h-5 animate-spin" /> Importing…</>
+                      ) : (
+                        <><Icons.Check className="w-5 h-5" /> Import {importData.length} Transactions</>
+                      )}
+                    </button>
+                  </div>
                 </>
               )}
             </div>

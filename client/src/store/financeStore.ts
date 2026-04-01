@@ -7,7 +7,11 @@ import { CategorizationRule, DEFAULT_RULES, autoCategorize } from '../utils/cate
 
 const API = async (path: string, options?: RequestInit) => {
   const res = await fetch(path, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    let msg = `API error ${res.status}`;
+    try { const body = await res.json(); if (body?.message) msg = body.message; } catch {}
+    throw new Error(msg);
+  }
   return res.json();
 };
 
@@ -204,6 +208,8 @@ export const useFinanceStore = create<FinanceState>()(
           // Remove the optimistic transactions so they don't appear as ghost entries
           // that would vanish on the next reload anyway
           set(s => ({ transactions: s.transactions.filter(t => !optimisticIds.has(t.id)) }));
+          // Re-throw so the calling component can surface the error to the user
+          throw err;
         }
       },
 
