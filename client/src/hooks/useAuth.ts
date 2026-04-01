@@ -14,6 +14,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string, displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateProfile: (displayName: string) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -27,7 +28,7 @@ export function useAuth() {
 export function useAuthState() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { loadFromServer, syncToServer } = useFinanceStore();
+  const { loadFromServer } = useFinanceStore();
 
   const fetchUser = async () => {
     try {
@@ -35,7 +36,6 @@ export function useAuthState() {
       if (res.ok) {
         const data = await res.json();
         setUser(data);
-        // Load server data when user is authenticated
         await loadFromServer();
       } else {
         setUser(null);
@@ -86,9 +86,23 @@ export function useAuthState() {
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
-    // Clear store data
     useFinanceStore.getState().clearAllData();
   };
 
-  return { user, isLoading, login, register, logout };
+  const updateProfile = async (displayName: string) => {
+    const res = await fetch("/api/auth/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ displayName }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || "Failed to update profile");
+    }
+    const updated = await res.json();
+    setUser(updated);
+  };
+
+  return { user, isLoading, login, register, logout, updateProfile };
 }

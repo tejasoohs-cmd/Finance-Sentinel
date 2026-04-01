@@ -3,7 +3,7 @@ import pkg from "pg";
 const { Pool } = pkg;
 import { eq, and, desc } from "drizzle-orm";
 import {
-  users, cards, categories, transactions, budgets, categorizationRules, userTags,
+  users, cards, categories, transactions, budgets, categorizationRules, userTags, passwordResetTokens,
   type User, type InsertUser,
   type Card, type InsertCard,
   type Category, type InsertCategory,
@@ -19,6 +19,11 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, updates: { displayName?: string }): Promise<User | undefined>;
+  updateUserPassword(id: string, hashedPassword: string): Promise<void>;
+  createResetToken(userId: string, token: string, expiresAt: number): Promise<void>;
+  getResetToken(token: string): Promise<{ id: string; userId: string; expiresAt: number; usedAt: number | null } | undefined>;
+  markResetTokenUsed(token: string): Promise<void>;
 
   getCards(userId: string): Promise<Card[]>;
   createCard(userId: string, card: InsertCard): Promise<Card>;
@@ -84,6 +89,28 @@ export class DbStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values({ ...insertUser, createdAt: Date.now() }).returning();
     return user;
+  }
+
+  async updateUser(id: string, updates: { displayName?: string }): Promise<User | undefined> {
+    const [updated] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
+    return updated;
+  }
+
+  async updateUserPassword(id: string, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, id));
+  }
+
+  async createResetToken(userId: string, token: string, expiresAt: number): Promise<void> {
+    await db.insert(passwordResetTokens).values({ userId, token, expiresAt });
+  }
+
+  async getResetToken(token: string): Promise<{ id: string; userId: string; expiresAt: number; usedAt: number | null } | undefined> {
+    const [row] = await db.select().from(passwordResetTokens).where(eq(passwordResetTokens.token, token));
+    return row;
+  }
+
+  async markResetTokenUsed(token: string): Promise<void> {
+    await db.update(passwordResetTokens).set({ usedAt: Date.now() }).where(eq(passwordResetTokens.token, token));
   }
 
   async getCards(userId: string): Promise<Card[]> {

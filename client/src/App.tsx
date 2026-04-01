@@ -9,6 +9,7 @@ import { Budgets } from "./pages/Budgets";
 import { Transfers } from "./pages/Transfers";
 import { ExportCenter } from "./pages/Export";
 import { Settings } from "./pages/Settings";
+import { Account } from "./pages/Account";
 import { AuthPage } from "./pages/AuthPage";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Toaster } from "@/components/ui/toaster";
@@ -28,6 +29,7 @@ function Router() {
       <Route path="/budgets" component={Budgets} />
       <Route path="/export" component={ExportCenter} />
       <Route path="/settings" component={Settings} />
+      <Route path="/account" component={Account} />
       <Route>
         <div className="flex flex-col items-center justify-center h-[50vh]">
           <h1 className="text-4xl font-bold text-primary mb-4">404</h1>

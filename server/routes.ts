@@ -136,6 +136,87 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(safeUser);
   });
 
+  // Update profile (displayName)
+  app.patch("/api/auth/profile", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any).id;
+      const { displayName } = req.body;
+      if (!displayName || displayName.trim().length < 1) {
+        return res.status(400).json({ message: "Display name cannot be empty" });
+      }
+      const updated = await storage.updateUser(userId, { displayName: displayName.trim() });
+      if (!updated) return res.status(404).json({ message: "User not found" });
+      const { password: _, ...safeUser } = updated;
+      res.json(safeUser);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
+  // Change password (requires current password)
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any).id;
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new password are required" });
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: "New password must be at least 6 characters" });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const valid = await comparePassword(currentPassword, user.password);
+      if (!valid) return res.status(400).json({ message: "Current password is incorrect" });
+      const hashed = await hashPassword(newPassword);
+      await storage.updateUserPassword(userId, hashed);
+      res.json({ message: "Password changed successfully" });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
+  // Forgot password — generates a one-time reset token (shown on screen, no email needed)
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { username } = req.body;
+      if (!username) return res.status(400).json({ message: "Username is required" });
+      const user = await storage.getUserByUsername(username);
+      // Always return success to avoid user enumeration
+      if (!user) return res.json({ message: "If that account exists, a reset token has been generated." });
+      const token = randomBytes(24).toString("hex");
+      const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
+      await storage.createResetToken(user.id, token, expiresAt);
+      // Return token directly since no email system
+      res.json({ token, expiresAt, message: "Copy this token — it expires in 1 hour." });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to generate reset token" });
+    }
+  });
+
+  // Reset password using a reset token
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword) {
+        return res.status(400).json({ message: "Token and new password are required" });
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
+      }
+      const resetRow = await storage.getResetToken(token);
+      if (!resetRow) return res.status(400).json({ message: "Invalid or expired reset token" });
+      if (resetRow.usedAt) return res.status(400).json({ message: "Reset token has already been used" });
+      if (Date.now() > resetRow.expiresAt) return res.status(400).json({ message: "Reset token has expired" });
+      const hashed = await hashPassword(newPassword);
+      await storage.updateUserPassword(resetRow.userId, hashed);
+      await storage.markResetTokenUsed(token);
+      res.json({ message: "Password reset successfully. You can now log in." });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
   // Sync - get all data for logged in user
   app.get("/api/sync", requireAuth, async (req, res) => {
     try {
