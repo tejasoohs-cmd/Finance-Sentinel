@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -6,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 export function Sidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const navItems = [
     { name: "Dashboard", href: "/", icon: Icons.LayoutDashboard },
@@ -19,15 +21,28 @@ export function Sidebar() {
     { name: "Settings", href: "/settings", icon: Icons.Settings },
   ];
 
-  const mobileNavItems = [
+  const mobilePrimaryItems = [
     { name: "Home", href: "/", icon: Icons.LayoutDashboard },
     { name: "Ledger", href: "/ledger", icon: Icons.ListOrdered },
     { name: "Cards", href: "/cards", icon: Icons.CreditCard },
     { name: "Reports", href: "/reports", icon: Icons.PieChart },
+  ];
+
+  const moreItems = [
+    { name: "Categories", href: "/categories", icon: Icons.Tags },
+    { name: "Rules", href: "/rules", icon: Icons.Brain },
+    { name: "Transfers", href: "/transfers", icon: Icons.ArrowRightLeft },
+    { name: "Export", href: "/export", icon: Icons.FileSpreadsheet },
+    { name: "Settings", href: "/settings", icon: Icons.Settings },
     { name: "Account", href: "/account", icon: Icons.UserCircle },
   ];
 
   const isAccountActive = location === "/account";
+  const isMoreActive = moreItems.some(item => location === item.href);
+
+  const handleMoreItemClick = () => {
+    setMoreOpen(false);
+  };
 
   return (
     <>
@@ -91,17 +106,68 @@ export function Sidebar() {
         </Link>
       </aside>
 
+      {/* Mobile — "More" overlay panel */}
+      {moreOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="md:hidden fixed inset-0 bg-black/50 z-40"
+            onClick={() => setMoreOpen(false)}
+            data-testid="more-backdrop"
+          />
+
+          {/* Panel */}
+          <div className="md:hidden fixed bottom-[56px] left-0 right-0 z-50 bg-card border-t border-border rounded-t-2xl shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
+            <div className="px-4 pt-4 pb-2">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">More pages</span>
+                <button
+                  onClick={() => setMoreOpen(false)}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded-lg"
+                  data-testid="button-close-more"
+                >
+                  <Icons.X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 pb-2">
+                {moreItems.map((item) => {
+                  const isActive = location === item.href;
+                  return (
+                    <Link key={item.name} href={item.href} onClick={handleMoreItemClick}>
+                      <span
+                        className={cn(
+                          "flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all duration-200 cursor-pointer",
+                          isActive
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        )}
+                        data-testid={`more-link-${item.name.toLowerCase()}`}
+                      >
+                        <item.icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} />
+                        <span className="text-[11px] font-medium text-center">{item.name}</span>
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border bg-card/90 backdrop-blur-lg z-50 flex justify-around items-center p-2 pb-safe">
-        {mobileNavItems.map((item) => {
+        {mobilePrimaryItems.map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.name} href={item.href}>
               <span
+                onClick={() => setMoreOpen(false)}
                 className={cn(
                   "flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-200 cursor-pointer",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )}
+                data-testid={`mobile-nav-${item.name.toLowerCase()}`}
               >
                 <item.icon className="w-5 h-5" />
                 <span className="text-[10px] font-medium">{item.name}</span>
@@ -109,6 +175,19 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {/* More tab */}
+        <button
+          onClick={() => setMoreOpen(v => !v)}
+          data-testid="mobile-nav-more"
+          className={cn(
+            "flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-200 cursor-pointer",
+            (moreOpen || isMoreActive) ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <Icons.LayoutGrid className="w-5 h-5" />
+          <span className="text-[10px] font-medium">More</span>
+        </button>
       </nav>
     </>
   );
