@@ -81,7 +81,7 @@ export const useFinanceStore = create<FinanceState>()(
         try {
           const data = await API('/api/sync');
           // Map server CategorizationRule to client CategorizationRule shape
-          const categorizationRules: CategorizationRule[] = (data.rules || []).map((r: any) => ({
+          const mappedRules: CategorizationRule[] = (data.rules || []).map((r: any) => ({
             id: r.id,
             keyword: r.keyword,
             categoryId: r.categoryId,
@@ -90,6 +90,10 @@ export const useFinanceStore = create<FinanceState>()(
             isExactMatch: r.isExactMatch || false,
             isEnabled: r.isEnabled !== false,
           }));
+          // Fall back to built-in defaults if the server returns no rules (same pattern as categories).
+          // The server auto-seeds defaults on the same request for pre-seeding users, so this
+          // fallback primarily covers any edge case where seeding itself fails.
+          const categorizationRules = mappedRules.length > 0 ? mappedRules : DEFAULT_RULES;
           // Use server data as the source of truth for transactions.
           // The server's deleteCard endpoint already NULLs card_id on orphaned transactions,
           // so we trust the DB state directly rather than filtering on the client.

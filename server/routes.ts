@@ -88,8 +88,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         await storage.upsertCategory(user.id, { id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, type: cat.type, isCustom: cat.isCustom || false });
       }
       for (const rule of DEFAULT_RULES) {
+        // Use generated UUIDs — static template IDs are global PKs that collide across users
         await storage.upsertRule(user.id, {
-          id: rule.id,
+          id: randomUUID(),
           keyword: rule.keyword,
           categoryId: rule.categoryId,
           tag: rule.tag || 'none',
@@ -222,8 +223,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const userId = (req.user as any).id;
       const data = await storage.getAllData(userId);
+      // Auto-seed defaults for users created before seeding was added
+      if (data.categories.length === 0) {
+        for (const cat of DEFAULT_CATEGORIES) {
+          await storage.upsertCategory(userId, {
+            id: cat.id, name: cat.name, icon: cat.icon,
+            color: cat.color, type: cat.type, isCustom: cat.isCustom || false,
+          });
+        }
+        data.categories = await storage.getCategories(userId);
+      }
+      if (data.rules.length === 0) {
+        // Use generated UUIDs — static template IDs like "rule_groc_1" are global PKs
+        // and may already be owned by another user, so we never reuse them.
+        for (const rule of DEFAULT_RULES) {
+          await storage.upsertRule(userId, {
+            id: randomUUID(),
+            keyword: rule.keyword,
+            categoryId: rule.categoryId,
+            tag: rule.tag || 'none',
+            type: (rule as any).type || null,
+            isExactMatch: false,
+            priority: 0,
+            isEnabled: true,
+          });
+        }
+        data.rules = await storage.getRules(userId);
+      }
       res.json(data);
     } catch (err) {
+      console.error('[sync] Error loading data:', err);
       res.status(500).json({ message: "Failed to load data" });
     }
   });
