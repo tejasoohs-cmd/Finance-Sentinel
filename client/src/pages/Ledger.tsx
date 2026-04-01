@@ -256,7 +256,7 @@ export function Ledger() {
   const { 
     transactions, categories, cards, tags,
     deleteTransaction, importTransactions, updateTransaction, addTransaction,
-    bulkUpdateTransactions, bulkDeleteTransactions
+    bulkUpdateTransactions, bulkDeleteTransactions, recategorizeTransactions
   } = useFinanceStore();
   
   const searchString = useSearch();
@@ -362,6 +362,20 @@ export function Ledger() {
       bulkDeleteTransactions(Array.from(selectedTxs));
       setSelectedTxs(new Set());
     }
+  };
+
+  const [recatFeedback, setRecatFeedback] = useState<string | null>(null);
+  const recatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleRecategorize = async (ids: string[]) => {
+    const result = await recategorizeTransactions(ids);
+    if (recatTimerRef.current) clearTimeout(recatTimerRef.current);
+    const msg = result.matched === 0
+      ? `No rules matched`
+      : `${result.matched} of ${result.total} categorized`;
+    setRecatFeedback(msg);
+    recatTimerRef.current = setTimeout(() => setRecatFeedback(null), 3000);
+    if (ids.length > 1) setSelectedTxs(new Set());
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -740,6 +754,17 @@ export function Ledger() {
                 <button onClick={() => setBulkEditMode('tag')} className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium hover:bg-secondary transition-colors flex items-center gap-1.5">
                   <Icons.Hash className="w-3.5 h-3.5" /> Set Tag
                 </button>
+                <button
+                  onClick={() => handleRecategorize(Array.from(selectedTxs))}
+                  className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium hover:bg-secondary transition-colors flex items-center gap-1.5"
+                  title="Re-run categorization rules on selected transactions"
+                  data-testid="button-bulk-recategorize"
+                >
+                  <Icons.Wand2 className="w-3.5 h-3.5" /> Re-categorize
+                </button>
+                {recatFeedback && (
+                  <span className="text-xs text-primary font-medium animate-in fade-in">{recatFeedback}</span>
+                )}
                 <button onClick={handleBulkDelete} className="px-3 py-1.5 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg text-xs font-medium hover:bg-destructive hover:text-destructive-foreground transition-colors ml-auto flex items-center gap-1.5">
                   <Icons.Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
@@ -867,10 +892,19 @@ export function Ledger() {
                                onClick={() => updateTransaction(tx.id, { isReviewed: true })}
                                className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-lg transition-colors"
                                title="Mark as Reviewed"
+                               data-testid={`button-mark-reviewed-${tx.id}`}
                              >
                                <Icons.CheckCircle2 className="w-4 h-4" />
                              </button>
                           )}
+                          <button 
+                            onClick={() => handleRecategorize([tx.id])}
+                            className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                            title="Re-run categorization rules"
+                            data-testid={`button-recategorize-${tx.id}`}
+                          >
+                            <Icons.Wand2 className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => setEditingTx(tx)}
                             className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
@@ -917,6 +951,17 @@ export function Ledger() {
                 <button onClick={() => setBulkEditMode('tag')} className="px-3 py-1.5 hover:bg-secondary rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
                   <Icons.Hash className="w-4 h-4"/> Tag
                 </button>
+                <button
+                  onClick={() => handleRecategorize(Array.from(selectedTxs))}
+                  className="px-3 py-1.5 hover:bg-secondary rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                  title="Re-run categorization rules on selected transactions"
+                  data-testid="button-float-recategorize"
+                >
+                  <Icons.Wand2 className="w-4 h-4"/> Re-categorize
+                </button>
+                {recatFeedback && (
+                  <span className="text-xs text-primary font-medium animate-in fade-in">{recatFeedback}</span>
+                )}
                 <button onClick={handleBulkDelete} className="px-3 py-1.5 hover:bg-destructive/10 text-destructive rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ml-2">
                   <Icons.Trash2 className="w-4 h-4"/> Delete
                 </button>

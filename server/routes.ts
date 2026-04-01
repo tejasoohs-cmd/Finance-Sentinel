@@ -428,6 +428,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ message: "Deleted" });
   });
 
+  app.post("/api/transactions/bulk-categorize", requireAuth, async (req, res) => {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.json({ matched: 0 });
+    }
+    const userId = (req.user as any).id;
+    let matched = 0;
+    for (const u of updates) {
+      if (typeof u.id === 'string' && typeof u.categoryId === 'string') {
+        await storage.updateTransaction(userId, u.id, {
+          categoryId: u.categoryId,
+          tag: u.tag ?? 'none',
+          isReviewed: u.isReviewed ?? true,
+        } as any);
+        matched++;
+      }
+    }
+    res.json({ matched });
+  });
+
   app.post("/api/transactions/link", requireAuth, async (req, res) => {
     const { id1, id2, transferType } = req.body;
     await storage.linkTransactions((req.user as any).id, id1, id2, transferType || 'internal');

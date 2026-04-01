@@ -55,6 +55,7 @@ interface FinanceState {
 
   bulkUpdateTransactions: (ids: string[], updates: Partial<Transaction>) => Promise<void>;
   bulkDeleteTransactions: (ids: string[]) => Promise<void>;
+  recategorizeTransactions: (ids: string[]) => Promise<{ matched: number; total: number }>;
   
   addCategorizationRule: (rule: Omit<CategorizationRule, 'id'>) => Promise<void>;
   updateCategorizationRule: (id: string, updates: Partial<CategorizationRule>) => Promise<void>;
@@ -299,6 +300,35 @@ export const useFinanceStore = create<FinanceState>()(
       bulkDeleteTransactions: async (ids) => {
         set(s => ({ transactions: s.transactions.filter(tx => !ids.includes(tx.id)) }));
         try { await API('/api/transactions/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); } catch {}
+      },
+
+      recategorizeTransactions: async (ids) => {
+        const state = get();
+        const rules = state.categorizationRules;
+        const txMap = new Map(state.transactions.map(t => [t.id, t]));
+
+        const updates: Array<{ id: string; categoryId: string; tag: string; isReviewed: boolean }> = [];
+        for (const id of ids) {
+          const tx = txMap.get(id);
+          if (!tx) continue;
+          const result = autoCategorize(tx.description, rules, tx.type);
+          if (result.categoryId !== 'cat_uncategorized') {
+            updates.push({ id, categoryId: result.categoryId, tag: result.tag, isReviewed: true });
+          }
+        }
+
+        if (updates.length === 0) return { matched: 0, total: ids.length };
+
+        set(s => ({
+          transactions: s.transactions.map(tx => {
+            const upd = updates.find(u => u.id === tx.id);
+            return upd ? { ...tx, categoryId: upd.categoryId, tag: upd.tag, isReviewed: true } : tx;
+          }),
+        }));
+
+        try { await API('/api/transactions/bulk-categorize', { method: 'POST', body: JSON.stringify({ updates }) }); } catch {}
+
+        return { matched: updates.length, total: ids.length };
       },
 
       addCategorizationRule: async (rule) => {
