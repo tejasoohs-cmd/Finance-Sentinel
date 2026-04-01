@@ -1,10 +1,11 @@
 import { useFinanceStore } from "@/store/financeStore";
 import * as Icons from "lucide-react";
 import { useRef } from "react";
-import { formatCurrency } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 export function Settings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user, logout } = useAuth();
   
   // Create a backup file
   const handleExport = () => {
@@ -72,10 +73,37 @@ export function Settings() {
   const pwaInstallable = 'serviceWorker' in navigator && (window as any).matchMedia;
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl pb-24">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-primary">Settings & Backup</h1>
         <p className="text-muted-foreground">Manage your app data, backups, and preferences.</p>
+      </div>
+
+      {/* Account Panel */}
+      <div className="p-6 bg-card border border-border rounded-2xl shadow-lg">
+        <div className="flex items-center gap-3 border-b border-border pb-4 mb-4">
+          <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
+            <Icons.User className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold">Account</h2>
+            <p className="text-xs text-muted-foreground">Your MoneyTrace profile</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-semibold">{user?.displayName || user?.username}</p>
+            <p className="text-sm text-muted-foreground font-mono">@{user?.username}</p>
+          </div>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-xl text-sm font-medium transition-colors"
+            data-testid="button-logout"
+          >
+            <Icons.LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">

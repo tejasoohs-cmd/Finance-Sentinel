@@ -1,16 +1,345 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import session from "express-session";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+import { scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+import connectPgSimple from "connect-pg-simple";
 import { storage } from "./storage";
+import { DEFAULT_CATEGORIES, DEFAULT_RULES } from "./defaults";
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+const scryptAsync = promisify(scrypt);
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `${buf.toString("hex")}.${salt}`;
+}
+
+async function comparePassword(supplied: string, stored: string): Promise<boolean> {
+  const [hashedPassword, salt] = stored.split(".");
+  const hashedBuf = Buffer.from(hashedPassword, "hex");
+  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
+  return timingSafeEqual(hashedBuf, suppliedBuf);
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.isAuthenticated()) return next();
+  res.status(401).json({ message: "Not authenticated" });
+}
+
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  const PgSession = connectPgSimple(session);
+
+  app.use(session({
+    store: new PgSession({
+      conString: process.env.DATABASE_URL,
+      tableName: "session",
+      createTableIfMissing: true,
+    }),
+    secret: process.env.SESSION_SECRET || "moneytrace-secret-key-2024",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 },
+  }));
+
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  passport.use(new LocalStrategy(async (username, password, done) => {
+    try {
+      const user = await storage.getUserByUsername(username);
+      if (!user) return done(null, false, { message: "Invalid username or password" });
+      const valid = await comparePassword(password, user.password);
+      if (!valid) return done(null, false, { message: "Invalid username or password" });
+      return done(null, user);
+    } catch (err) {
+      return done(err);
+    }
+  }));
+
+  passport.serializeUser((user: any, done) => done(null, user.id));
+  passport.deserializeUser(async (id: string, done) => {
+    try {
+      const user = await storage.getUser(id);
+      done(null, user || false);
+    } catch (err) {
+      done(err);
+    }
+  });
+
+  // Auth routes
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { username, password, displayName } = req.body;
+      if (!username || !password) return res.status(400).json({ message: "Username and password required" });
+      if (username.length < 3) return res.status(400).json({ message: "Username must be at least 3 characters" });
+      if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const existing = await storage.getUserByUsername(username);
+      if (existing) return res.status(409).json({ message: "Username already taken" });
+
+      const hashed = await hashPassword(password);
+      const user = await storage.createUser({ username, password: hashed, displayName: displayName || username });
+
+      // Seed default categories and rules for new users
+      for (const cat of DEFAULT_CATEGORIES) {
+        await storage.upsertCategory(user.id, { id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, type: cat.type, isCustom: cat.isCustom || false });
+      }
+      for (const rule of DEFAULT_RULES) {
+        await storage.upsertRule(user.id, {
+          id: rule.id,
+          keyword: rule.keyword,
+          categoryId: rule.categoryId,
+          tag: rule.tag || 'none',
+          type: rule.type || null,
+          isExactMatch: rule.isExactMatch || false,
+          priority: 0,
+        });
+      }
+      await storage.addTag(user.id, 'none');
+      await storage.addTag(user.id, 'personal');
+      await storage.addTag(user.id, 'business');
+
+      req.login(user, (err) => {
+        if (err) return res.status(500).json({ message: "Login failed after registration" });
+        const { password: _, ...safeUser } = user;
+        res.status(201).json(safeUser);
+      });
+    } catch (err: any) {
+      console.error("Register error:", err);
+      res.status(500).json({ message: "Registration failed" });
+    }
+  });
+
+  app.post("/api/auth/login", (req, res, next) => {
+    passport.authenticate("local", (err: any, user: any, info: any) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
+      req.login(user, (err) => {
+        if (err) return next(err);
+        const { password: _, ...safeUser } = user;
+        res.json(safeUser);
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.logout(() => res.json({ message: "Logged out" }));
+  });
+
+  app.get("/api/auth/me", (req, res) => {
+    if (!req.isAuthenticated() || !req.user) return res.status(401).json({ message: "Not authenticated" });
+    const user = req.user as any;
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  });
+
+  // Sync - get all data for logged in user
+  app.get("/api/sync", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any).id;
+      const data = await storage.getAllData(userId);
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to load data" });
+    }
+  });
+
+  // Push all local data to server (initial migration from localStorage)
+  app.post("/api/sync/push", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any).id;
+      const { transactions, cards, categories, budgets, rules, tags } = req.body;
+      await storage.syncAllData(userId, { transactions: transactions || [], cards: cards || [], categories: categories || [], budgets: budgets || [], rules: rules || [], tags: tags || [] });
+      res.json({ message: "Data synced" });
+    } catch (err: any) {
+      console.error("Sync push error:", err);
+      res.status(500).json({ message: "Sync failed" });
+    }
+  });
+
+  // Cards
+  app.get("/api/cards", requireAuth, async (req, res) => {
+    const cards = await storage.getCards((req.user as any).id);
+    res.json(cards);
+  });
+
+  app.post("/api/cards", requireAuth, async (req, res) => {
+    try {
+      const card = await storage.createCard((req.user as any).id, req.body);
+      res.status(201).json(card);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create card" });
+    }
+  });
+
+  app.patch("/api/cards/:id", requireAuth, async (req, res) => {
+    const card = await storage.updateCard((req.user as any).id, req.params.id, req.body);
+    if (!card) return res.status(404).json({ message: "Card not found" });
+    res.json(card);
+  });
+
+  app.delete("/api/cards/:id", requireAuth, async (req, res) => {
+    await storage.deleteCard((req.user as any).id, req.params.id);
+    res.json({ message: "Deleted" });
+  });
+
+  // Categories
+  app.get("/api/categories", requireAuth, async (req, res) => {
+    const cats = await storage.getCategories((req.user as any).id);
+    res.json(cats);
+  });
+
+  app.post("/api/categories", requireAuth, async (req, res) => {
+    try {
+      const cat = await storage.upsertCategory((req.user as any).id, req.body);
+      res.status(201).json(cat);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create category" });
+    }
+  });
+
+  app.patch("/api/categories/:id", requireAuth, async (req, res) => {
+    try {
+      const cat = await storage.upsertCategory((req.user as any).id, { ...req.body, id: req.params.id });
+      res.json(cat);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update category" });
+    }
+  });
+
+  app.delete("/api/categories/:id", requireAuth, async (req, res) => {
+    await storage.deleteCategory((req.user as any).id, req.params.id);
+    res.json({ message: "Deleted" });
+  });
+
+  // Transactions
+  app.get("/api/transactions", requireAuth, async (req, res) => {
+    const txs = await storage.getTransactions((req.user as any).id);
+    res.json(txs);
+  });
+
+  app.post("/api/transactions", requireAuth, async (req, res) => {
+    try {
+      const tx = await storage.createTransaction((req.user as any).id, req.body);
+      res.status(201).json(tx);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create transaction" });
+    }
+  });
+
+  app.post("/api/transactions/import", requireAuth, async (req, res) => {
+    try {
+      const { transactions: txs } = req.body;
+      const created = await storage.createTransactions((req.user as any).id, txs);
+      res.status(201).json(created);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to import transactions" });
+    }
+  });
+
+  app.patch("/api/transactions/:id", requireAuth, async (req, res) => {
+    const tx = await storage.updateTransaction((req.user as any).id, req.params.id, req.body);
+    if (!tx) return res.status(404).json({ message: "Transaction not found" });
+    res.json(tx);
+  });
+
+  app.delete("/api/transactions/:id", requireAuth, async (req, res) => {
+    await storage.deleteTransaction((req.user as any).id, req.params.id);
+    res.json({ message: "Deleted" });
+  });
+
+  app.post("/api/transactions/bulk-update", requireAuth, async (req, res) => {
+    const { ids, updates } = req.body;
+    await storage.bulkUpdateTransactions((req.user as any).id, ids, updates);
+    res.json({ message: "Updated" });
+  });
+
+  app.post("/api/transactions/bulk-delete", requireAuth, async (req, res) => {
+    const { ids } = req.body;
+    await storage.bulkDeleteTransactions((req.user as any).id, ids);
+    res.json({ message: "Deleted" });
+  });
+
+  app.post("/api/transactions/link", requireAuth, async (req, res) => {
+    const { id1, id2, transferType } = req.body;
+    await storage.linkTransactions((req.user as any).id, id1, id2, transferType || 'internal');
+    const txs = await storage.getTransactions((req.user as any).id);
+    res.json(txs);
+  });
+
+  app.post("/api/transactions/unlink/:id", requireAuth, async (req, res) => {
+    await storage.unlinkTransaction((req.user as any).id, req.params.id);
+    const txs = await storage.getTransactions((req.user as any).id);
+    res.json(txs);
+  });
+
+  // Budgets
+  app.get("/api/budgets", requireAuth, async (req, res) => {
+    const buds = await storage.getBudgets((req.user as any).id);
+    res.json(buds);
+  });
+
+  app.post("/api/budgets", requireAuth, async (req, res) => {
+    try {
+      const bud = await storage.upsertBudget((req.user as any).id, req.body);
+      res.status(201).json(bud);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create budget" });
+    }
+  });
+
+  app.patch("/api/budgets/:id", requireAuth, async (req, res) => {
+    try {
+      const bud = await storage.upsertBudget((req.user as any).id, { ...req.body, id: req.params.id });
+      res.json(bud);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update budget" });
+    }
+  });
+
+  app.delete("/api/budgets/:id", requireAuth, async (req, res) => {
+    await storage.deleteBudget((req.user as any).id, req.params.id);
+    res.json({ message: "Deleted" });
+  });
+
+  // Rules
+  app.get("/api/rules", requireAuth, async (req, res) => {
+    const rules = await storage.getRules((req.user as any).id);
+    res.json(rules);
+  });
+
+  app.post("/api/rules", requireAuth, async (req, res) => {
+    try {
+      const rule = await storage.upsertRule((req.user as any).id, req.body);
+      res.status(201).json(rule);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create rule" });
+    }
+  });
+
+  app.delete("/api/rules/:id", requireAuth, async (req, res) => {
+    await storage.deleteRule((req.user as any).id, req.params.id);
+    res.json({ message: "Deleted" });
+  });
+
+  // Tags
+  app.get("/api/tags", requireAuth, async (req, res) => {
+    const tags = await storage.getTags((req.user as any).id);
+    res.json(tags);
+  });
+
+  app.post("/api/tags", requireAuth, async (req, res) => {
+    await storage.addTag((req.user as any).id, req.body.tag);
+    res.json({ message: "Added" });
+  });
+
+  app.delete("/api/tags/:tag", requireAuth, async (req, res) => {
+    await storage.deleteTag((req.user as any).id, req.params.tag);
+    res.json({ message: "Deleted" });
+  });
 
   return httpServer;
 }

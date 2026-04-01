@@ -2,8 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { Transaction, Card, Category, Budget, DEFAULT_CATEGORIES, TransactionTag } from '../types/finance';
-import { format, subDays, addDays } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import { CategorizationRule, DEFAULT_RULES, autoCategorize } from '../utils/categorization';
+
+const API = async (path: string, options?: RequestInit) => {
+  const res = await fetch(path, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+};
 
 interface FinanceState {
   transactions: Transaction[];
@@ -12,43 +18,47 @@ interface FinanceState {
   tags: string[];
   budgets: Budget[];
   categorizationRules: CategorizationRule[];
+  isOnline: boolean;
   
   // Actions
-  addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
-  updateTransaction: (id: string, tx: Partial<Transaction>) => void;
-  deleteTransaction: (id: string) => void;
-  importTransactions: (transactions: Omit<Transaction, 'id' | 'createdAt'>[]) => void;
+  addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => Promise<void>;
+  updateTransaction: (id: string, tx: Partial<Transaction>) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
+  importTransactions: (transactions: Omit<Transaction, 'id' | 'createdAt'>[]) => Promise<void>;
   
-  addCard: (card: Omit<Card, 'id'>) => void;
-  updateCard: (id: string, card: Partial<Card>) => void;
-  deleteCard: (id: string) => void;
+  addCard: (card: Omit<Card, 'id'>) => Promise<void>;
+  updateCard: (id: string, card: Partial<Card>) => Promise<void>;
+  deleteCard: (id: string) => Promise<void>;
   
-  addCategory: (category: Omit<Category, 'id'>) => void;
-  updateCategory: (id: string, category: Partial<Category>) => void;
-  deleteCategory: (id: string) => void;
+  addCategory: (category: Omit<Category, 'id'>) => Promise<void>;
+  updateCategory: (id: string, category: Partial<Category>) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
 
-  addTag: (tag: string) => void;
-  deleteTag: (tag: string) => void;
+  addTag: (tag: string) => Promise<void>;
+  deleteTag: (tag: string) => Promise<void>;
 
-  addBudget: (budget: Omit<Budget, 'id'>) => void;
-  updateBudget: (id: string, budget: Partial<Budget>) => void;
-  deleteBudget: (id: string) => void;
+  addBudget: (budget: Omit<Budget, 'id'>) => Promise<void>;
+  updateBudget: (id: string, budget: Partial<Budget>) => Promise<void>;
+  deleteBudget: (id: string) => Promise<void>;
 
-  matchTransfers: () => void;
-  linkTransactions: (id1: string, id2: string, transferType?: any) => void;
-  unlinkTransaction: (id: string) => void;
-  splitTransaction: (id: string, splits: { amount: number, categoryId: string, type: 'expense'|'income'|'transfer', description: string }[]) => void;
+  matchTransfers: () => Promise<void>;
+  linkTransactions: (id1: string, id2: string, transferType?: any) => Promise<void>;
+  unlinkTransaction: (id: string) => Promise<void>;
+  splitTransaction: (id: string, splits: { amount: number, categoryId: string, type: 'expense'|'income'|'transfer', description: string }[]) => Promise<void>;
 
   clearAllData: () => void;
-  loadDemoData: () => void;
+  loadDemoData: () => Promise<void>;
 
-  bulkUpdateTransactions: (ids: string[], updates: Partial<Transaction>) => void;
-  bulkDeleteTransactions: (ids: string[]) => void;
+  bulkUpdateTransactions: (ids: string[], updates: Partial<Transaction>) => Promise<void>;
+  bulkDeleteTransactions: (ids: string[]) => Promise<void>;
   
-  // Categorization Rules
-  addCategorizationRule: (rule: Omit<CategorizationRule, 'id'>) => void;
-  deleteCategorizationRule: (id: string) => void;
-  learnFromTransaction: (description: string, categoryId: string, tag: string, type: 'expense' | 'income' | 'transfer') => void;
+  addCategorizationRule: (rule: Omit<CategorizationRule, 'id'>) => Promise<void>;
+  deleteCategorizationRule: (id: string) => Promise<void>;
+  learnFromTransaction: (description: string, categoryId: string, tag: string, type: 'expense' | 'income' | 'transfer') => Promise<void>;
+
+  // Server sync
+  loadFromServer: () => Promise<void>;
+  syncToServer: () => Promise<void>;
 }
 
 export const useFinanceStore = create<FinanceState>()(
@@ -60,204 +70,268 @@ export const useFinanceStore = create<FinanceState>()(
       tags: ['none', 'personal', 'business'],
       budgets: [],
       categorizationRules: DEFAULT_RULES,
+      isOnline: false,
 
-      addTransaction: (tx) => set((state) => {
-        // Auto-categorize if it's uncategorized
+      loadFromServer: async () => {
+        try {
+          const data = await API('/api/sync');
+          // Map server CategorizationRule to client CategorizationRule shape
+          const rules: CategorizationRule[] = (data.rules || []).map((r: any) => ({
+            id: r.id,
+            keyword: r.keyword,
+            categoryId: r.categoryId,
+            tag: r.tag || 'none',
+            type: r.type || undefined,
+            isExactMatch: r.isExactMatch || false,
+          }));
+          set({
+            transactions: data.transactions || [],
+            cards: data.cards || [],
+            categories: data.categories?.length > 0 ? data.categories : DEFAULT_CATEGORIES,
+            budgets: data.budgets || [],
+            rules,
+            tags: data.tags?.length > 0 ? data.tags : ['none', 'personal', 'business'],
+            isOnline: true,
+          } as any);
+        } catch (err) {
+          console.error('Failed to load from server:', err);
+          set({ isOnline: false });
+        }
+      },
+
+      syncToServer: async () => {
+        const state = get();
+        try {
+          await API('/api/sync/push', {
+            method: 'POST',
+            body: JSON.stringify({
+              transactions: state.transactions,
+              cards: state.cards,
+              categories: state.categories,
+              budgets: state.budgets,
+              rules: state.categorizationRules,
+              tags: state.tags,
+            }),
+          });
+        } catch (err) {
+          console.error('Sync failed:', err);
+        }
+      },
+
+      addTransaction: async (tx) => {
+        const state = get();
         let finalTx = { ...tx, isReviewed: true };
         if (tx.categoryId === 'cat_uncategorized') {
-           const result = autoCategorize(tx.description, state.categorizationRules, tx.type);
-           finalTx.categoryId = result.categoryId;
-           if (tx.tag === 'none') {
-             finalTx.tag = result.tag;
-           }
+          const result = autoCategorize(tx.description, state.categorizationRules, tx.type);
+          finalTx.categoryId = result.categoryId;
+          if (tx.tag === 'none') finalTx.tag = result.tag;
         }
-        
-        return {
-          transactions: [{ ...finalTx, id: uuidv4(), createdAt: Date.now() }, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        const toPost = { ...finalTx, id: uuidv4(), createdAt: Date.now() };
+        try {
+          const created = await API('/api/transactions', { method: 'POST', body: JSON.stringify(toPost) });
+          set(s => ({ transactions: [created, ...s.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
+        } catch {
+          // Optimistic fallback
+          set(s => ({ transactions: [toPost, ...s.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
         }
-      }),
+      },
 
-      updateTransaction: (id, txUpdate) => set((state) => {
-         // If category or tag is manually changed, learn from it
-         const oldTx = state.transactions.find(t => t.id === id);
-         if (oldTx && txUpdate.categoryId && oldTx.categoryId !== txUpdate.categoryId) {
-            get().learnFromTransaction(oldTx.description, txUpdate.categoryId, txUpdate.tag || oldTx.tag, txUpdate.type || oldTx.type);
-         }
-         
-         return {
-          transactions: state.transactions.map((tx) => 
-            tx.id === id ? { ...tx, ...txUpdate, isReviewed: true } : tx
-          )
-         }
-      }),
+      updateTransaction: async (id, txUpdate) => {
+        const state = get();
+        const oldTx = state.transactions.find(t => t.id === id);
+        if (oldTx && txUpdate.categoryId && oldTx.categoryId !== txUpdate.categoryId) {
+          get().learnFromTransaction(oldTx.description, txUpdate.categoryId, txUpdate.tag || oldTx.tag, txUpdate.type || oldTx.type);
+        }
+        set(s => ({ transactions: s.transactions.map(tx => tx.id === id ? { ...tx, ...txUpdate, isReviewed: true } : tx) }));
+        try {
+          await API(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify({ ...txUpdate, isReviewed: true }) });
+        } catch (err) {
+          console.error('Update tx failed:', err);
+        }
+      },
 
-      deleteTransaction: (id) => set((state) => {
-        // If it was matched, unmatch the pair
+      deleteTransaction: async (id) => {
+        const state = get();
         const tx = state.transactions.find(t => t.id === id);
-        let newTransactions = state.transactions.filter((t) => t.id !== id);
-        
-        if (tx?.isTransferMatched && tx.transferMatchId) {
-          newTransactions = newTransactions.map(t => 
-            t.id === tx.transferMatchId ? { ...t, isTransferMatched: false, transferMatchId: undefined, transferType: 'none' } : t
-          );
-        }
-        
-        return { transactions: newTransactions };
-      }),
-
-      importTransactions: (newTransactions) => set((state) => {
-        const toAdd = newTransactions.map(tx => {
-           let finalTx = { ...tx, id: uuidv4(), createdAt: Date.now(), isReviewed: false };
-           
-           if (finalTx.categoryId === 'cat_uncategorized') {
-             const result = autoCategorize(finalTx.description, state.categorizationRules, finalTx.type);
-             finalTx.categoryId = result.categoryId;
-             if (finalTx.tag === 'none') {
-               finalTx.tag = result.tag;
-             }
-             // Confident match -> auto review
-             if (result.categoryId !== 'cat_uncategorized' && result.categoryId !== 'cat_other' && result.categoryId !== 'cat_transfer') {
-               finalTx.isReviewed = true;
-             }
-           }
-           return finalTx;
+        set(s => {
+          let newTransactions = s.transactions.filter(t => t.id !== id);
+          if (tx?.isTransferMatched && tx.transferMatchId) {
+            newTransactions = newTransactions.map(t => t.id === tx.transferMatchId ? { ...t, isTransferMatched: false, transferMatchId: undefined, transferType: 'none' as any } : t);
+          }
+          return { transactions: newTransactions };
         });
-        
-        return {
-          transactions: [...toAdd, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        try { await API(`/api/transactions/${id}`, { method: 'DELETE' }); } catch {}
+      },
+
+      importTransactions: async (newTransactions) => {
+        const state = get();
+        const toAdd = newTransactions.map(tx => {
+          let finalTx = { ...tx, id: uuidv4(), createdAt: Date.now(), isReviewed: false };
+          if (finalTx.categoryId === 'cat_uncategorized') {
+            const result = autoCategorize(finalTx.description, state.categorizationRules, finalTx.type);
+            finalTx.categoryId = result.categoryId;
+            if (finalTx.tag === 'none') finalTx.tag = result.tag;
+            if (result.categoryId !== 'cat_uncategorized' && result.categoryId !== 'cat_other' && result.categoryId !== 'cat_transfer') {
+              finalTx.isReviewed = true;
+            }
+          }
+          return finalTx;
+        });
+        set(s => ({ transactions: [...toAdd, ...s.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
+        try {
+          const created = await API('/api/transactions/import', { method: 'POST', body: JSON.stringify({ transactions: toAdd }) });
+          // Update IDs in store from server response (server may reassign IDs)
+          // For now just ensure store stays up-to-date
+        } catch (err) {
+          console.error('Import failed:', err);
+        }
+      },
+
+      addCard: async (card) => {
+        const newCard = { ...card, id: uuidv4() };
+        set(s => ({ cards: [...s.cards, newCard] }));
+        try {
+          const created = await API('/api/cards', { method: 'POST', body: JSON.stringify(newCard) });
+          set(s => ({ cards: s.cards.map(c => c.id === newCard.id ? created : c) }));
+        } catch {}
+      },
+
+      updateCard: async (id, cardUpdate) => {
+        set(s => ({ cards: s.cards.map(c => c.id === id ? { ...c, ...cardUpdate } : c) }));
+        try { await API(`/api/cards/${id}`, { method: 'PATCH', body: JSON.stringify(cardUpdate) }); } catch {}
+      },
+
+      deleteCard: async (id) => {
+        set(s => ({
+          cards: s.cards.filter(c => c.id !== id),
+          transactions: s.transactions.map(tx => tx.cardId === id ? { ...tx, cardId: null } : tx)
+        }));
+        try { await API(`/api/cards/${id}`, { method: 'DELETE' }); } catch {}
+      },
+
+      addCategory: async (category) => {
+        const newCat = { ...category, id: `cat_custom_${uuidv4()}`, isCustom: true };
+        set(s => ({ categories: [...s.categories, newCat] }));
+        try { await API('/api/categories', { method: 'POST', body: JSON.stringify(newCat) }); } catch {}
+      },
+
+      updateCategory: async (id, categoryUpdate) => {
+        set(s => ({ categories: s.categories.map(c => c.id === id ? { ...c, ...categoryUpdate } : c) }));
+        try { await API(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify(categoryUpdate) }); } catch {}
+      },
+
+      deleteCategory: async (id) => {
+        set(s => ({
+          categories: s.categories.filter(c => c.id !== id),
+          transactions: s.transactions.map(tx => tx.categoryId === id ? { ...tx, categoryId: 'cat_uncategorized' } : tx)
+        }));
+        try { await API(`/api/categories/${id}`, { method: 'DELETE' }); } catch {}
+      },
+
+      addTag: async (tag) => {
+        set(s => ({ tags: s.tags.includes(tag.toLowerCase()) ? s.tags : [...s.tags, tag.toLowerCase()] }));
+        try { await API('/api/tags', { method: 'POST', body: JSON.stringify({ tag: tag.toLowerCase() }) }); } catch {}
+      },
+
+      deleteTag: async (tag) => {
+        set(s => ({
+          tags: s.tags.filter(t => t !== tag),
+          transactions: s.transactions.map(tx => tx.tag === tag ? { ...tx, tag: 'none' } : tx)
+        }));
+        try { await API(`/api/tags/${tag}`, { method: 'DELETE' }); } catch {}
+      },
+
+      addBudget: async (budget) => {
+        const newBudget = { ...budget, id: uuidv4() };
+        set(s => ({ budgets: [...s.budgets, newBudget] }));
+        try { await API('/api/budgets', { method: 'POST', body: JSON.stringify(newBudget) }); } catch {}
+      },
+
+      updateBudget: async (id, budgetUpdate) => {
+        set(s => ({ budgets: s.budgets.map(b => b.id === id ? { ...b, ...budgetUpdate } : b) }));
+        try { await API(`/api/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(budgetUpdate) }); } catch {}
+      },
+
+      deleteBudget: async (id) => {
+        set(s => ({ budgets: s.budgets.filter(b => b.id !== id) }));
+        try { await API(`/api/budgets/${id}`, { method: 'DELETE' }); } catch {}
+      },
+
+      bulkUpdateTransactions: async (ids, updates) => {
+        set(s => ({ transactions: s.transactions.map(tx => ids.includes(tx.id) ? { ...tx, ...updates } : tx) }));
+        try { await API('/api/transactions/bulk-update', { method: 'POST', body: JSON.stringify({ ids, updates }) }); } catch {}
+      },
+
+      bulkDeleteTransactions: async (ids) => {
+        set(s => ({ transactions: s.transactions.filter(tx => !ids.includes(tx.id)) }));
+        try { await API('/api/transactions/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }); } catch {}
+      },
+
+      addCategorizationRule: async (rule) => {
+        const newRule = { ...rule, id: `rule_custom_${uuidv4()}` };
+        set(s => ({ categorizationRules: [...s.categorizationRules, newRule] }));
+        try { await API('/api/rules', { method: 'POST', body: JSON.stringify(newRule) }); } catch {}
+      },
+
+      deleteCategorizationRule: async (id) => {
+        set(s => ({ categorizationRules: s.categorizationRules.filter(r => r.id !== id) }));
+        try { await API(`/api/rules/${id}`, { method: 'DELETE' }); } catch {}
+      },
+
+      learnFromTransaction: async (description, categoryId, tag, type) => {
+        if (!description || categoryId === 'cat_uncategorized' || description.length < 3) return;
+        const words = description.split(/[\s,.-]+/).filter(w => w.length > 2);
+        if (words.length === 0) return;
+        const keyword = words.slice(0, 2).join(' ').toLowerCase();
+        const state = get();
+        if (state.categorizationRules.some(r => r.keyword === keyword)) return;
+        const newRule: CategorizationRule = {
+          id: `rule_learned_${uuidv4()}`,
+          keyword,
+          categoryId,
+          tag,
+          type,
+          isExactMatch: false
         };
-      }),
+        set(s => ({ categorizationRules: [newRule, ...s.categorizationRules] }));
+        try { await API('/api/rules', { method: 'POST', body: JSON.stringify({ ...newRule, priority: 10 }) }); } catch {}
+      },
 
-      addCard: (card) => set((state) => ({
-        cards: [...state.cards, { ...card, id: uuidv4() }]
-      })),
-
-      updateCard: (id, cardUpdate) => set((state) => ({
-        cards: state.cards.map((card) => card.id === id ? { ...card, ...cardUpdate } : card)
-      })),
-
-      deleteCard: (id) => set((state) => ({
-        cards: state.cards.filter((card) => card.id !== id),
-        transactions: state.transactions.map(tx => tx.cardId === id ? { ...tx, cardId: null } : tx)
-      })),
-
-      addCategory: (category) => set((state) => ({
-        categories: [...state.categories, { ...category, id: `cat_custom_${uuidv4()}`, isCustom: true }]
-      })),
-
-      updateCategory: (id, categoryUpdate) => set((state) => ({
-        categories: state.categories.map((c) => c.id === id ? { ...c, ...categoryUpdate } : c)
-      })),
-
-      deleteCategory: (id) => set((state) => ({
-        categories: state.categories.filter((c) => c.id !== id),
-        transactions: state.transactions.map(tx => tx.categoryId === id ? { ...tx, categoryId: 'cat_uncategorized' } : tx)
-      })),
-
-      addTag: (tag) => set((state) => ({
-        tags: state.tags.includes(tag.toLowerCase()) ? state.tags : [...state.tags, tag.toLowerCase()]
-      })),
-
-      deleteTag: (tag) => set((state) => ({
-        tags: state.tags.filter(t => t !== tag),
-        transactions: state.transactions.map(tx => tx.tag === tag ? { ...tx, tag: 'none' } : tx)
-      })),
-
-      addBudget: (budget) => set((state) => ({
-        budgets: [...state.budgets, { ...budget, id: uuidv4() }]
-      })),
-
-      updateBudget: (id, budgetUpdate) => set((state) => ({
-        budgets: state.budgets.map((b) => b.id === id ? { ...b, ...budgetUpdate } : b)
-      })),
-
-      deleteBudget: (id) => set((state) => ({
-        budgets: state.budgets.filter((b) => b.id !== id)
-      })),
-
-      bulkUpdateTransactions: (ids, updates) => set((state) => ({
-        transactions: state.transactions.map(tx => ids.includes(tx.id) ? { ...tx, ...updates } : tx)
-      })),
-
-      bulkDeleteTransactions: (ids) => set((state) => {
-        // Just remove them for now. Complex unmatching logic can be added if needed
-        return { transactions: state.transactions.filter(tx => !ids.includes(tx.id)) };
-      }),
-
-      addCategorizationRule: (rule) => set((state) => ({
-        categorizationRules: [...state.categorizationRules, { ...rule, id: `rule_custom_${uuidv4()}` }]
-      })),
-
-      deleteCategorizationRule: (id) => set((state) => ({
-        categorizationRules: state.categorizationRules.filter(r => r.id !== id)
-      })),
-
-      learnFromTransaction: (description, categoryId, tag, type) => set((state) => {
-         if (!description || categoryId === 'cat_uncategorized' || description.length < 3) return state;
-         
-         // Only learn from the first couple words to be robust against dates/numbers in descriptions
-         const words = description.split(/[\s,.-]+/).filter(w => w.length > 2);
-         if (words.length === 0) return state;
-         
-         const keyword = words.slice(0, 2).join(' ').toLowerCase();
-         
-         // Don't overwrite existing rule for this exact keyword
-         if (state.categorizationRules.some(r => r.keyword === keyword)) {
-            return state;
-         }
-         
-         const newRule: CategorizationRule = {
-            id: `rule_learned_${uuidv4()}`,
-            keyword,
-            categoryId,
-            tag,
-            type,
-            isExactMatch: false
-         };
-         
-         return {
-            categorizationRules: [newRule, ...state.categorizationRules] // Put learned rules first so they take priority
-         };
-      }),
-
-      linkTransactions: (id1, id2, transferType = 'internal') => set((state) => {
-        return {
-          transactions: state.transactions.map(tx => {
-            if (tx.id === id1) return { ...tx, isTransferMatched: true, transferMatchId: id2, type: 'transfer', categoryId: 'cat_transfer', transferType };
-            if (tx.id === id2) return { ...tx, isTransferMatched: true, transferMatchId: id1, type: 'transfer', categoryId: 'cat_transfer', transferType };
+      linkTransactions: async (id1, id2, transferType = 'internal') => {
+        set(s => ({
+          transactions: s.transactions.map(tx => {
+            if (tx.id === id1) return { ...tx, isTransferMatched: true, transferMatchId: id2, type: 'transfer' as any, categoryId: 'cat_transfer', transferType };
+            if (tx.id === id2) return { ...tx, isTransferMatched: true, transferMatchId: id1, type: 'transfer' as any, categoryId: 'cat_transfer', transferType };
             return tx;
           })
-        };
-      }),
+        }));
+        try {
+          const txs = await API('/api/transactions/link', { method: 'POST', body: JSON.stringify({ id1, id2, transferType }) });
+          set({ transactions: txs });
+        } catch {}
+      },
 
-      unlinkTransaction: (id) => set((state) => {
-        const tx = state.transactions.find(t => t.id === id);
-        if (!tx || !tx.transferMatchId) return state;
-
+      unlinkTransaction: async (id) => {
+        const tx = get().transactions.find(t => t.id === id);
+        if (!tx?.transferMatchId) return;
         const matchId = tx.transferMatchId;
-        
-        return {
-          transactions: state.transactions.map(t => {
+        set(s => ({
+          transactions: s.transactions.map(t => {
             if (t.id === id || t.id === matchId) {
-              return { 
-                ...t, 
-                isTransferMatched: false, 
-                transferMatchId: undefined, 
-                transferType: 'none',
-                // Revert to expense/income based on amount
-                type: t.amount >= 0 ? 'income' : 'expense',
-                categoryId: 'cat_uncategorized'
-              };
+              return { ...t, isTransferMatched: false, transferMatchId: undefined, transferType: 'none' as any, type: t.amount >= 0 ? 'income' as any : 'expense' as any, categoryId: 'cat_uncategorized' };
             }
             return t;
           })
-        };
-      }),
+        }));
+        try {
+          const txs = await API(`/api/transactions/unlink/${id}`, { method: 'POST' });
+          set({ transactions: txs });
+        } catch {}
+      },
 
-      splitTransaction: (id, splits) => set((state) => {
-        const parent = state.transactions.find(t => t.id === id);
-        if (!parent) return state;
-
+      splitTransaction: async (id, splits) => {
+        const parent = get().transactions.find(t => t.id === id);
+        if (!parent) return;
         const newTxs: Transaction[] = splits.map(split => ({
           ...parent,
           id: uuidv4(),
@@ -268,60 +342,57 @@ export const useFinanceStore = create<FinanceState>()(
           parentId: parent.id,
           createdAt: Date.now()
         }));
+        set(s => ({
+          transactions: [...s.transactions.filter(t => t.id !== id), ...newTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        }));
+        try {
+          await API(`/api/transactions/${id}`, { method: 'DELETE' });
+          await API('/api/transactions/import', { method: 'POST', body: JSON.stringify({ transactions: newTxs }) });
+        } catch {}
+      },
 
-        // Remove parent, insert children
-        const newTransactions = [
-          ...state.transactions.filter(t => t.id !== id),
-          ...newTxs
-        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-        return { transactions: newTransactions };
-      }),
-
-      matchTransfers: () => set((state) => {
-        const transactions = [...state.transactions];
+      matchTransfers: async () => {
+        const transactions = [...get().transactions];
+        const toLink: { id1: string; id2: string }[] = [];
         
         for (let i = 0; i < transactions.length; i++) {
           const t1 = transactions[i];
-          // We only auto-match unmatched transactions that are marked as 'transfer' or could be
           if (t1.isTransferMatched) continue;
-          
-          // Heuristic: If description contains keywords like "transfer", "payment", "deposit" it's a good candidate
           const isLikelyTransfer1 = t1.type === 'transfer' || /transfer|payment|deposit|wd/i.test(t1.description.toLowerCase());
-
           for (let j = i + 1; j < transactions.length; j++) {
             const t2 = transactions[j];
             if (t2.isTransferMatched) continue;
-
             const isOpposite = (t1.amount === -t2.amount) || (Math.abs(t1.amount) === Math.abs(t2.amount) && t1.type !== t2.type);
             const isLikelyTransfer2 = t2.type === 'transfer' || /transfer|payment|deposit|wd/i.test(t2.description.toLowerCase());
-            
             if (isOpposite && (isLikelyTransfer1 || isLikelyTransfer2)) {
-              const d1 = new Date(t1.date);
-              const d2 = new Date(t2.date);
-              const diffDays = Math.abs(d1.getTime() - d2.getTime()) / (1000 * 3600 * 24);
-              
+              const diffDays = Math.abs(new Date(t1.date).getTime() - new Date(t2.date).getTime()) / (1000 * 3600 * 24);
               if (diffDays <= 3) {
                 transactions[i] = { ...t1, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t2.id, transferType: 'uncertain' };
                 transactions[j] = { ...t2, type: 'transfer', categoryId: 'cat_transfer', isTransferMatched: true, transferMatchId: t1.id, transferType: 'uncertain' };
+                toLink.push({ id1: t1.id, id2: t2.id });
                 break;
               }
             }
           }
         }
-
-        return { transactions };
-      }),
+        set({ transactions });
+        for (const { id1, id2 } of toLink) {
+          try { await API('/api/transactions/link', { method: 'POST', body: JSON.stringify({ id1, id2, transferType: 'uncertain' }) }); } catch {}
+        }
+      },
 
       clearAllData: () => set({
         transactions: [],
         cards: [],
         budgets: [],
         categories: DEFAULT_CATEGORIES,
-        tags: ['none', 'personal', 'business']
+        tags: ['none', 'personal', 'business'],
+        categorizationRules: DEFAULT_RULES,
+        isOnline: false,
       }),
 
-      loadDemoData: () => set((state) => {
+      loadDemoData: async () => {
+        const state = get();
         const enbdDebitId = uuidv4();
         const mashreqCCId = uuidv4();
         const adcbCCId = uuidv4();
@@ -337,130 +408,24 @@ export const useFinanceStore = create<FinanceState>()(
         const today = new Date();
         const d = (days: number) => format(subDays(today, days), 'yyyy-MM-dd');
 
-        // Criss-cross transfer chain scenario
-        const tx1Id = uuidv4(); // Salary
-        const tx2Id = uuidv4(); // ENBD transfer out to Mashreq CC
-        const tx3Id = uuidv4(); // Mashreq CC payment received
-        const tx4Id = uuidv4(); // ATM withdrawal from ENBD
-        const tx5Id = uuidv4(); // Cash added to wallet
-        const tx6Id = uuidv4(); // Paid ADCB CC with cash
-        const tx7Id = uuidv4(); // ADCB CC payment received
-
-        const demoTransactions: Transaction[] = [
-          {
-            id: tx1Id,
-            date: d(5),
-            description: 'Salary Transfer',
-            originalDescription: 'SALARY TRANSFER CORP',
-            amount: 25000.00,
-            type: 'income',
-            categoryId: 'cat_salary',
-            cardId: enbdDebitId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx2Id,
-            date: d(4),
-            description: 'Payment to Mashreq CC',
-            originalDescription: 'TRANSFER TO 8831',
-            amount: -5000.00,
-            type: 'expense', // Unmatched initially
-            categoryId: 'cat_uncategorized',
-            cardId: enbdDebitId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx3Id,
-            date: d(4),
-            description: 'Online Payment Received',
-            originalDescription: 'PAYMENT RECEIVED THANK YOU',
-            amount: 5000.00,
-            type: 'income', // Unmatched initially
-            categoryId: 'cat_uncategorized',
-            cardId: mashreqCCId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx4Id,
-            date: d(3),
-            description: 'ATM Withdrawal Marina Mall',
-            originalDescription: 'ATM WD MARINA MALL',
-            amount: -2000.00,
-            type: 'expense',
-            categoryId: 'cat_uncategorized',
-            cardId: enbdDebitId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx5Id,
-            date: d(3),
-            description: 'Cash from ATM',
-            originalDescription: 'Cash deposit to wallet',
-            amount: 2000.00,
-            type: 'income',
-            categoryId: 'cat_uncategorized',
-            cardId: cashWalletId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx6Id,
-            date: d(2),
-            description: 'Cash Payment at Branch for ADCB CC',
-            originalDescription: 'Cash Payment',
-            amount: -1500.00,
-            type: 'expense',
-            categoryId: 'cat_uncategorized',
-            cardId: cashWalletId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          {
-            id: tx7Id,
-            date: d(2),
-            description: 'Cash Deposit at CDM',
-            originalDescription: 'CASH DEPOSIT CDM BR 12',
-            amount: 1500.00,
-            type: 'income',
-            categoryId: 'cat_uncategorized',
-            cardId: adcbCCId,
-            tag: 'none',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          },
-          // And one real expense to show it mixed in
-          {
-            id: uuidv4(),
-            date: d(1),
-            description: 'Spinneys Dubai Marina',
-            originalDescription: 'POS PUR SPINNEYS DUBAI AE',
-            amount: -345.50,
-            type: 'expense',
-            categoryId: 'cat_groceries',
-            cardId: mashreqCCId,
-            tag: 'personal',
-            isTransferMatched: false,
-            createdAt: Date.now()
-          }
+        const demoTransactions: Omit<Transaction, 'id' | 'createdAt'>[] = [
+          { date: d(5), description: 'Salary Transfer', originalDescription: 'SALARY TRANSFER CORP', amount: 25000, type: 'income', categoryId: 'cat_salary', cardId: enbdDebitId, tag: 'none', isTransferMatched: false },
+          { date: d(4), description: 'Payment to Mashreq CC', originalDescription: 'TRANSFER TO 8831', amount: -5000, type: 'expense', categoryId: 'cat_uncategorized', cardId: enbdDebitId, tag: 'none', isTransferMatched: false },
+          { date: d(4), description: 'Online Payment Received', originalDescription: 'PAYMENT RECEIVED THANK YOU', amount: 5000, type: 'income', categoryId: 'cat_uncategorized', cardId: mashreqCCId, tag: 'none', isTransferMatched: false },
+          { date: d(3), description: 'ATM Withdrawal Marina Mall', originalDescription: 'ATM WD MARINA MALL', amount: -2000, type: 'expense', categoryId: 'cat_uncategorized', cardId: enbdDebitId, tag: 'none', isTransferMatched: false },
+          { date: d(3), description: 'Cash from ATM', originalDescription: 'Cash deposit to wallet', amount: 2000, type: 'income', categoryId: 'cat_uncategorized', cardId: cashWalletId, tag: 'none', isTransferMatched: false },
+          { date: d(2), description: 'Cash Payment at Branch for ADCB CC', originalDescription: 'Cash Payment', amount: -1500, type: 'expense', categoryId: 'cat_uncategorized', cardId: cashWalletId, tag: 'none', isTransferMatched: false },
+          { date: d(2), description: 'Cash Deposit at CDM', originalDescription: 'CASH DEPOSIT CDM BR 12', amount: 1500, type: 'income', categoryId: 'cat_uncategorized', cardId: adcbCCId, tag: 'none', isTransferMatched: false },
+          { date: d(1), description: 'Spinneys Dubai Marina', originalDescription: 'POS PUR SPINNEYS DUBAI AE', amount: -345.50, type: 'expense', categoryId: 'cat_groceries', cardId: mashreqCCId, tag: 'personal', isTransferMatched: false },
         ];
 
-        return {
-          cards: demoCards,
-          transactions: demoTransactions,
-          categories: state.categories?.length > 0 ? state.categories : DEFAULT_CATEGORIES,
-          tags: state.tags?.length > 0 ? state.tags : ['none', 'personal', 'business']
-        };
-      })
+        // Add cards first
+        for (const card of demoCards) {
+          const { id, ...rest } = card;
+          await get().addCard({ ...rest });
+        }
+        await get().importTransactions(demoTransactions);
+      }
     }),
     {
       name: 'moneytrace-storage',

@@ -1,9 +1,11 @@
 import { Link, useLocation } from "wouter";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 export function Sidebar() {
   const [location] = useLocation();
+  const { user } = useAuth();
 
   const navItems = [
     { name: "Dashboard", href: "/", icon: Icons.LayoutDashboard },
@@ -54,9 +56,9 @@ export function Sidebar() {
             <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center border border-border">
               <Icons.User className="w-5 h-5 text-muted-foreground" />
             </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-foreground">User</span>
-              <span className="text-xs text-muted-foreground">UAE Resident</span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-medium text-foreground truncate">{user?.displayName || user?.username || 'User'}</span>
+              <span className="text-xs text-muted-foreground truncate">@{user?.username || 'guest'}</span>
             </div>
           </div>
         </div>
