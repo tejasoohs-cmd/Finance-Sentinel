@@ -129,6 +129,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteCard(userId: string, id: string): Promise<void> {
+    await db.update(transactions)
+      .set({ cardId: null })
+      .where(and(eq(transactions.userId, userId), eq(transactions.cardId, id)));
     await db.delete(cards).where(and(eq(cards.id, id), eq(cards.userId, userId)));
   }
 

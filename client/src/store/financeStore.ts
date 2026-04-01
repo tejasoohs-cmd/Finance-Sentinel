@@ -86,8 +86,15 @@ export const useFinanceStore = create<FinanceState>()(
             isExactMatch: r.isExactMatch || false,
             isEnabled: r.isEnabled !== false,
           }));
+          // Build a set of valid card IDs so we can sanitize orphaned references
+          const validCardIds = new Set<string>((data.cards || []).map((c: any) => c.id));
+          // Null out any cardId that no longer has a matching card in the server response
+          const transactions = (data.transactions || []).map((tx: any) => ({
+            ...tx,
+            cardId: tx.cardId && validCardIds.has(tx.cardId) ? tx.cardId : null,
+          }));
           set({
-            transactions: data.transactions || [],
+            transactions,
             cards: data.cards || [],
             categories: data.categories?.length > 0 ? data.categories : DEFAULT_CATEGORIES,
             budgets: data.budgets || [],
@@ -195,7 +202,11 @@ export const useFinanceStore = create<FinanceState>()(
         try {
           const created = await API('/api/cards', { method: 'POST', body: JSON.stringify(newCard) });
           set(s => ({ cards: s.cards.map(c => c.id === newCard.id ? created : c) }));
-        } catch {}
+        } catch (err) {
+          // Rollback optimistic update if the server save failed
+          console.error('Failed to save card:', err);
+          set(s => ({ cards: s.cards.filter(c => c.id !== newCard.id) }));
+        }
       },
 
       updateCard: async (id, cardUpdate) => {
