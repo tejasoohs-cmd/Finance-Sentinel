@@ -297,7 +297,7 @@ export function Ledger() {
   const [importHeaders, setImportHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<ColumnMapping>({});
   const [amountMode, setAmountMode] = useState<"single" | "dual" | "direction">("single");
-  const [dateMode, setDateMode] = useState<"DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD" | "auto">("auto");
+  const [dateMode, setDateMode] = useState<"DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY-MM-DD" | "DD MMM YYYY" | "auto">("auto");
   const [selectedCardId, setSelectedCardId] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -397,40 +397,92 @@ export function Ledger() {
     });
   };
 
-  const parseDate = (dateStr: string, mode: string) => {
+  const parseDate = (dateStr: string, mode: string): string => {
     if (!dateStr) return new Date().toISOString().split('T')[0];
-    
-    // Clean up string: remove time part if present (e.g. "15/04/2023 14:30" -> "15/04/2023")
-    const cleanStr = dateStr.toString().trim().split(' ')[0];
-    
+    const fallback = new Date().toISOString().split('T')[0];
+
+    // Strip trailing time portion only (e.g. "15/04/2023 14:30:00" -> "15/04/2023")
+    // Preserve month-name formats like "15 Apr 2023" — only remove trailing HH:MM or HH:MM:SS
+    const raw = dateStr.toString().trim().replace(/\s+\d{1,2}:\d{2}(:\d{2})?(\s*(AM|PM))?$/i, '').trim();
+
+    const MONTHS: Record<string, string> = {
+      jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06',
+      jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12',
+      january:'01', february:'02', march:'03', april:'04', june:'06',
+      july:'07', august:'08', september:'09', october:'10', november:'11', december:'12',
+    };
+
+    // Parse "DD MMM YYYY" or "DD-MMM-YYYY" or "DD/MMM/YYYY" (e.g. "15 Apr 2023", "01-Jan-24")
+    const tryMonthName = (s: string): string | null => {
+      const m = s.match(/^(\d{1,2})[\s\-/]([A-Za-z]{3,9})[\s\-/](\d{2,4})$/);
+      if (m) {
+        const day = m[1].padStart(2, '0');
+        const mon = MONTHS[m[2].toLowerCase()];
+        if (!mon) return null;
+        const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+        return `${year}-${mon}-${day}`;
+      }
+      return null;
+    };
+
+    // Split purely numeric date on separators (-, /, .)
+    const numericParts = (s: string) => s.split(/[-/.]/).map(p => p.trim());
+
     try {
       if (mode === "DD/MM/YYYY") {
-        const parts = cleanStr.split(/[-/]/);
-        if (parts.length >= 3) {
-          const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-          return `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        const mn = tryMonthName(raw);
+        if (mn) return mn;
+        const p = numericParts(raw);
+        if (p.length >= 3) {
+          const year = p[2].length === 2 ? `20${p[2]}` : p[2];
+          return `${year}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
         }
+        return fallback;
+
       } else if (mode === "MM/DD/YYYY") {
-        const parts = cleanStr.split(/[-/]/);
-        if (parts.length >= 3) {
-          const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-          return `${year}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+        const mn = tryMonthName(raw);
+        if (mn) return mn;
+        const p = numericParts(raw);
+        if (p.length >= 3) {
+          const year = p[2].length === 2 ? `20${p[2]}` : p[2];
+          return `${year}-${p[0].padStart(2, '0')}-${p[1].padStart(2, '0')}`;
         }
-      }
-      
-      const d = new Date(cleanStr);
-      if (isNaN(d.getTime())) {
-        // Fallback for tricky formats if Date() fails, try DD/MM/YYYY as best guess
-        const parts = cleanStr.split(/[-/]/);
-        if (parts.length >= 3) {
-            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-            return `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        return fallback;
+
+      } else if (mode === "YYYY-MM-DD") {
+        const p = numericParts(raw);
+        if (p.length >= 3 && p[0].length === 4) {
+          return `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
         }
-        return new Date().toISOString().split('T')[0];
+        // Also accept ISO 8601 with T separator
+        if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+        return fallback;
+
+      } else if (mode === "DD MMM YYYY") {
+        const mn = tryMonthName(raw);
+        if (mn) return mn;
+        return fallback;
+
+      } else {
+        // auto: try month-name first, then YYYY-MM-DD, then assume DD/MM/YYYY for ambiguous
+        const mn = tryMonthName(raw);
+        if (mn) return mn;
+        // Unambiguous ISO format
+        if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+        const p = numericParts(raw);
+        if (p.length >= 3) {
+          if (p[0].length === 4) {
+            // YYYY/MM/DD
+            return `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
+          }
+          // Ambiguous numeric (DD/MM/YYYY assumed — UAE standard)
+          const year = p[2].length === 2 ? `20${p[2]}` : p[2];
+          return `${year}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
+        }
+        return fallback;
       }
-      return d.toISOString().split('T')[0];
     } catch {
-      return new Date().toISOString().split('T')[0];
+      return fallback;
     }
   };
 
@@ -956,8 +1008,10 @@ export function Ledger() {
                             value={dateMode}
                             onChange={(e) => setDateMode(e.target.value as any)}
                           >
-                            <option value="auto">Auto-detect (YYYY-MM-DD)</option>
+                            <option value="auto">Auto-detect</option>
                             <option value="DD/MM/YYYY">DD/MM/YYYY (Common in UAE)</option>
+                            <option value="DD MMM YYYY">DD MMM YYYY (e.g. 15 Apr 2023)</option>
+                            <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
                             <option value="MM/DD/YYYY">MM/DD/YYYY (US Format)</option>
                           </select>
                         </div>
