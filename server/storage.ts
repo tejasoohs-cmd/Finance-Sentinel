@@ -162,7 +162,14 @@ export class DbStorage implements IStorage {
 
   async createTransactions(userId: string, txs: InsertTransaction[]): Promise<Transaction[]> {
     if (txs.length === 0) return [];
-    return db.insert(transactions).values(txs.map(tx => ({ ...tx, userId }))).returning();
+    // onConflictDoNothing prevents a duplicate-key error from failing the entire
+    // batch (e.g. if the client retries after a network timeout where the server
+    // already committed the rows).
+    return db
+      .insert(transactions)
+      .values(txs.map(tx => ({ ...tx, userId })))
+      .onConflictDoNothing()
+      .returning();
   }
 
   async updateTransaction(userId: string, id: string, tx: Partial<InsertTransaction>): Promise<Transaction | undefined> {

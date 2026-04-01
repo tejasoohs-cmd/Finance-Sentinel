@@ -322,7 +322,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.patch("/api/transactions/:id", requireAuth, async (req, res) => {
-    const tx = await storage.updateTransaction((req.user as any).id, req.params.id, req.body);
+    // Whitelist only known DB-level fields so that frontend-only properties
+    // (e.g. isMalformed, optimistic flags) never reach Drizzle's set().
+    const ALLOWED: (keyof typeof req.body)[] = [
+      'date', 'description', 'originalDescription', 'amount', 'type',
+      'categoryId', 'cardId', 'tag', 'isTransferMatched', 'transferMatchId',
+      'transferType', 'parentId', 'isReviewed', 'notes', 'createdAt',
+    ];
+    const safe: Record<string, any> = {};
+    for (const key of ALLOWED) {
+      if (key in req.body) safe[key] = req.body[key];
+    }
+    const tx = await storage.updateTransaction((req.user as any).id, req.params.id, safe as any);
     if (!tx) return res.status(404).json({ message: "Transaction not found" });
     res.json(tx);
   });
@@ -334,7 +345,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/transactions/bulk-update", requireAuth, async (req, res) => {
     const { ids, updates } = req.body;
-    await storage.bulkUpdateTransactions((req.user as any).id, ids, updates);
+    const ALLOWED = [
+      'date', 'description', 'originalDescription', 'amount', 'type',
+      'categoryId', 'cardId', 'tag', 'isTransferMatched', 'transferMatchId',
+      'transferType', 'parentId', 'isReviewed', 'notes', 'createdAt',
+    ];
+    const safe: Record<string, any> = {};
+    for (const key of ALLOWED) {
+      if (updates && key in updates) safe[key] = updates[key];
+    }
+    await storage.bulkUpdateTransactions((req.user as any).id, ids, safe as any);
     res.json({ message: "Updated" });
   });
 

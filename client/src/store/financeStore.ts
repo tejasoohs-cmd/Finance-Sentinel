@@ -77,7 +77,7 @@ export const useFinanceStore = create<FinanceState>()(
         try {
           const data = await API('/api/sync');
           // Map server CategorizationRule to client CategorizationRule shape
-          const rules: CategorizationRule[] = (data.rules || []).map((r: any) => ({
+          const categorizationRules: CategorizationRule[] = (data.rules || []).map((r: any) => ({
             id: r.id,
             keyword: r.keyword,
             categoryId: r.categoryId,
@@ -86,19 +86,17 @@ export const useFinanceStore = create<FinanceState>()(
             isExactMatch: r.isExactMatch || false,
             isEnabled: r.isEnabled !== false,
           }));
-          // Build a set of valid card IDs so we can sanitize orphaned references
-          const validCardIds = new Set<string>((data.cards || []).map((c: any) => c.id));
-          // Null out any cardId that no longer has a matching card in the server response
-          const transactions = (data.transactions || []).map((tx: any) => ({
-            ...tx,
-            cardId: tx.cardId && validCardIds.has(tx.cardId) ? tx.cardId : null,
-          }));
+          // Use server data as the source of truth for transactions.
+          // The server's deleteCard endpoint already NULLs card_id on orphaned transactions,
+          // so we trust the DB state directly rather than filtering on the client.
+          // This prevents false-positive nulling of valid card references.
+          const transactions = (data.transactions || []) as any[];
           set({
             transactions,
             cards: data.cards || [],
             categories: data.categories?.length > 0 ? data.categories : DEFAULT_CATEGORIES,
             budgets: data.budgets || [],
-            rules,
+            categorizationRules,
             tags: data.tags?.length > 0 ? data.tags : ['none', 'personal', 'business'],
             isOnline: true,
           } as any);
@@ -186,13 +184,26 @@ export const useFinanceStore = create<FinanceState>()(
           }
           return finalTx;
         });
+        // Track the optimistic IDs so we can roll back if the server fails
+        const optimisticIds = new Set(toAdd.map(t => t.id));
         set(s => ({ transactions: [...toAdd, ...s.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
         try {
-          const created = await API('/api/transactions/import', { method: 'POST', body: JSON.stringify({ transactions: toAdd }) });
-          // Update IDs in store from server response (server may reassign IDs)
-          // For now just ensure store stays up-to-date
+          const created: any[] = await API('/api/transactions/import', { method: 'POST', body: JSON.stringify({ transactions: toAdd }) });
+          // Replace the optimistic entries with the exact server-confirmed records
+          // so cardId, id, and all fields match the DB precisely
+          if (Array.isArray(created) && created.length > 0) {
+            set(s => ({
+              transactions: [
+                ...created,
+                ...s.transactions.filter(t => !optimisticIds.has(t.id)),
+              ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+            }));
+          }
         } catch (err) {
-          console.error('Import failed:', err);
+          console.error('Import failed, rolling back optimistic update:', err);
+          // Remove the optimistic transactions so they don't appear as ghost entries
+          // that would vanish on the next reload anyway
+          set(s => ({ transactions: s.transactions.filter(t => !optimisticIds.has(t.id)) }));
         }
       },
 
