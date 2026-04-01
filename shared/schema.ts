@@ -72,6 +72,7 @@ export const categorizationRules = pgTable("categorization_rules", {
   type: text("type"),
   isExactMatch: boolean("is_exact_match").default(false),
   priority: integer("priority").default(0),
+  isEnabled: boolean("is_enabled").notNull().default(true),
 });
 
 export const userTags = pgTable("user_tags", {

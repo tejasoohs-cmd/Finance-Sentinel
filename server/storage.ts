@@ -50,6 +50,7 @@ export interface IStorage {
 
   getRules(userId: string): Promise<CategorizationRule[]>;
   upsertRule(userId: string, rule: InsertRule): Promise<CategorizationRule>;
+  updateRule(userId: string, id: string, updates: Partial<InsertRule>): Promise<CategorizationRule | undefined>;
   deleteRule(userId: string, id: string): Promise<void>;
 
   getTags(userId: string): Promise<string[]>;
@@ -223,9 +224,17 @@ export class DbStorage implements IStorage {
   async upsertRule(userId: string, rule: InsertRule): Promise<CategorizationRule> {
     const [upserted] = await db.insert(categorizationRules)
       .values({ ...rule, userId })
-      .onConflictDoUpdate({ target: categorizationRules.id, set: { keyword: rule.keyword, categoryId: rule.categoryId, tag: rule.tag, type: rule.type, isExactMatch: rule.isExactMatch, priority: rule.priority } })
+      .onConflictDoUpdate({ target: categorizationRules.id, set: { keyword: rule.keyword, categoryId: rule.categoryId, tag: rule.tag, type: rule.type, isExactMatch: rule.isExactMatch, priority: rule.priority, isEnabled: rule.isEnabled ?? true } })
       .returning();
     return upserted;
+  }
+
+  async updateRule(userId: string, id: string, updates: Partial<InsertRule>): Promise<CategorizationRule | undefined> {
+    const [updated] = await db.update(categorizationRules)
+      .set(updates)
+      .where(and(eq(categorizationRules.id, id), eq(categorizationRules.userId, userId)))
+      .returning();
+    return updated;
   }
 
   async deleteRule(userId: string, id: string): Promise<void> {

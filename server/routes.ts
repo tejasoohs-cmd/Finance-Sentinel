@@ -401,6 +401,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.patch("/api/rules/:id", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.updateRule((req.user as any).id, req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Rule not found" });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update rule" });
+    }
+  });
+
   app.delete("/api/rules/:id", requireAuth, async (req, res) => {
     await storage.deleteRule((req.user as any).id, req.params.id);
     res.json({ message: "Deleted" });

@@ -16,14 +16,18 @@ A comprehensive personal finance and card tracking PWA for UAE users with a prem
 - CSV import wizard (single, dual, direction modes)
 - Multi-select transaction workflow with bulk actions
 - Auto-categorization with learning from user edits
+- Full Rule Manager: view, edit, add, delete, enable/disable rules with search and filter
 - Custom categories, tags, and categorization rules
 - Internal transfer classification and matching
+- Smart transfer suggestions (scored candidate pairs by amount + date proximity)
 - Cash wallet tracking
-- Credit card controls (statement date, due date, credit limit, utilization)
+- Credit card intelligence: outstanding balance, statement cycle spend, payments received, utilization, due date alerts
+- Recurring transaction detection: weekly, monthly, quarterly, annual patterns with next estimate
+- Monthly intelligence: MoM comparison in Reports (income/expense deltas per category) + MoM badges on Home
 - Review workflow for imported transactions
 - Actual Spend vs Full Money Flow dual-view in Ledger
 - Mobile-friendly PWA with backup/restore
-- **Login/Signup with cloud sync (Phase 2)**
+- **Login/Signup with cloud sync**
 
 ## Tech Stack
 
@@ -42,7 +46,7 @@ A comprehensive personal finance and card tracking PWA for UAE users with a prem
 - `categories` - Transaction categories (default + custom)
 - `transactions` - Financial transactions with transfer linking
 - `budgets` - Monthly category budgets
-- `categorization_rules` - Auto-categorization rules (default + learned + custom)
+- `categorization_rules` - Auto-categorization rules (default + learned + custom); has `is_enabled` boolean (added via raw SQL, not db:push due to interactive prompt)
 - `user_tags` - Custom tags per user
 
 ## File Structure

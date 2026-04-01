@@ -1,10 +1,24 @@
+import { Transaction } from "@/types/finance";
+
 export interface CategorizationRule {
   id: string;
-  keyword: string; // The substring to match in the transaction description
-  categoryId: string; // The category to assign
-  tag: string; // The tag to assign (personal, business, none)
-  type?: 'expense' | 'income' | 'transfer'; // Optional strict type matching
-  isExactMatch?: boolean; // If true, matches exact word, otherwise substring
+  keyword: string;
+  categoryId: string;
+  tag: string;
+  type?: 'expense' | 'income' | 'transfer';
+  isExactMatch?: boolean;
+  isEnabled?: boolean;
+}
+
+export interface RecurringPattern {
+  key: string;
+  description: string;
+  categoryId: string;
+  frequency: 'weekly' | 'monthly' | 'quarterly' | 'annual';
+  avgAmount: number;
+  count: number;
+  lastDate: string;
+  nextEstimate?: string;
 }
 
 export const DEFAULT_RULES: CategorizationRule[] = [
@@ -106,16 +120,11 @@ export const DEFAULT_RULES: CategorizationRule[] = [
 
 export function autoCategorize(description: string, rules: CategorizationRule[], defaultType: 'expense' | 'income' | 'transfer'): { categoryId: string, tag: string } {
   const lowerDesc = description.toLowerCase();
-  
-  // Find matching rule
-  const match = rules.find(rule => {
-    // If the rule specifies a type, ensure it matches the transaction type
-    if (rule.type && rule.type !== defaultType) {
-        return false;
-    }
-    
+  const activeRules = rules.filter(r => r.isEnabled !== false);
+
+  const match = activeRules.find(rule => {
+    if (rule.type && rule.type !== defaultType) return false;
     if (rule.isExactMatch) {
-      // Split description into words and check for exact match
       const words = lowerDesc.split(/[\s,.-]+/);
       return words.includes(rule.keyword.toLowerCase());
     } else {
@@ -124,18 +133,68 @@ export function autoCategorize(description: string, rules: CategorizationRule[],
   });
 
   if (match) {
-    return {
-      categoryId: match.categoryId,
-      tag: match.tag,
-    };
+    return { categoryId: match.categoryId, tag: match.tag };
   }
 
-  // Fallback if no match
-  if (defaultType === 'income') {
-    return { categoryId: 'cat_other_income', tag: 'none' };
-  } else if (defaultType === 'transfer') {
-    return { categoryId: 'cat_transfer', tag: 'none' };
-  } else {
-    return { categoryId: 'cat_uncategorized', tag: 'none' };
-  }
+  if (defaultType === 'income') return { categoryId: 'cat_other_income', tag: 'none' };
+  if (defaultType === 'transfer') return { categoryId: 'cat_transfer', tag: 'none' };
+  return { categoryId: 'cat_uncategorized', tag: 'none' };
+}
+
+function normalizeDesc(desc: string): string {
+  return desc.toLowerCase().replace(/[0-9#*@\-_\/\\|]+/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 40);
+}
+
+export function detectRecurring(transactions: Transaction[]): RecurringPattern[] {
+  const expenses = transactions.filter(t => t.type === 'expense' && !t.isTransferMatched);
+  const groups: Record<string, Transaction[]> = {};
+
+  expenses.forEach(tx => {
+    const key = normalizeDesc(tx.description);
+    if (!key || key.length < 3) return;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(tx);
+  });
+
+  const patterns: RecurringPattern[] = [];
+
+  Object.entries(groups).forEach(([key, txs]) => {
+    if (txs.length < 2) return;
+
+    const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    const dates = sorted.map(t => new Date(t.date).getTime());
+    const gaps: number[] = [];
+    for (let i = 1; i < dates.length; i++) {
+      gaps.push((dates[i] - dates[i - 1]) / (1000 * 60 * 60 * 24));
+    }
+
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const avgAmount = Math.abs(sorted.reduce((a, t) => a + t.amount, 0) / sorted.length);
+
+    let frequency: RecurringPattern['frequency'] | null = null;
+    if (avgGap >= 5 && avgGap <= 10) frequency = 'weekly';
+    else if (avgGap >= 20 && avgGap <= 40) frequency = 'monthly';
+    else if (avgGap >= 80 && avgGap <= 105) frequency = 'quarterly';
+    else if (avgGap >= 340 && avgGap <= 390) frequency = 'annual';
+
+    if (!frequency) return;
+
+    const lastTx = sorted[sorted.length - 1];
+    const lastDate = new Date(lastTx.date);
+    const daysToAdd = frequency === 'weekly' ? 7 : frequency === 'monthly' ? 30 : frequency === 'quarterly' ? 91 : 365;
+    const nextDate = new Date(lastDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+
+    patterns.push({
+      key,
+      description: lastTx.description,
+      categoryId: lastTx.categoryId,
+      frequency,
+      avgAmount,
+      count: txs.length,
+      lastDate: lastTx.date,
+      nextEstimate: nextDate.toISOString().split('T')[0],
+    });
+  });
+
+  return patterns.sort((a, b) => b.count - a.count);
 }

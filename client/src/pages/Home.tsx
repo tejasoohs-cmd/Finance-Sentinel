@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useFinanceStore } from "@/store/financeStore";
-import { Card, Category, Transaction } from "@/types/finance";
+import { Card, Transaction } from "@/types/finance";
 import * as Icons from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { useLocation } from "wouter";
+import { detectRecurring } from "@/utils/categorization";
 
 export function Dashboard() {
   const { transactions, loadDemoData, clearAllData, cards, categories } = useFinanceStore();
@@ -15,43 +16,88 @@ export function Dashboard() {
     setLocation(`/ledger?${query}`);
   };
 
-  // Filter transactions based on view mode
-  // "actual" mode excludes internal transfers and CC payments from expense/income calculation
-  // "full" mode shows all money movement in and out, ignoring the isTransferMatched flag
-  const effectiveTxs = viewMode === "actual" 
-    ? transactions.filter(t => !t.isTransferMatched) 
+  const currentMonth = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  const prevMonth = useMemo(() => {
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  const effectiveTxs = viewMode === "actual"
+    ? transactions.filter(t => !t.isTransferMatched)
     : transactions;
 
   const totalBalance = transactions.reduce((acc, tx) => acc + tx.amount, 0);
-  
+
   const income = effectiveTxs.filter(t => t.type === 'income' || (t.amount > 0 && viewMode === "full")).reduce((acc, tx) => acc + tx.amount, 0);
   const expenses = effectiveTxs.filter(t => t.type === 'expense' || (t.amount < 0 && viewMode === "full")).reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
 
-  // Cash wallet calculation
   const cashWallet = cards.find(c => c.type === 'cash');
   const cashBalance = cashWallet ? transactions.filter(t => t.cardId === cashWallet.id).reduce((acc, tx) => acc + tx.amount, 0) : 0;
 
   const personalTxs = effectiveTxs.filter(t => t.type === 'expense' && t.tag === 'personal');
   const businessTxs = effectiveTxs.filter(t => t.type === 'expense' && t.tag === 'business');
-  
   const personalExpenses = personalTxs.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
   const businessExpenses = businessTxs.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
-  
-  // Calculate spend by account
+
   const accountSpend: Record<string, number> = {};
   effectiveTxs.filter(t => t.type === 'expense').forEach(tx => {
-     if (tx.cardId) {
-        accountSpend[tx.cardId] = (accountSpend[tx.cardId] || 0) + Math.abs(tx.amount);
-     }
+    if (tx.cardId) accountSpend[tx.cardId] = (accountSpend[tx.cardId] || 0) + Math.abs(tx.amount);
   });
+
+  // MoM calculations for the current month vs previous month
+  const currentMonthTxs = effectiveTxs.filter(t => t.date.startsWith(currentMonth));
+  const prevMonthTxs = effectiveTxs.filter(t => t.date.startsWith(prevMonth));
+
+  const curIncome = currentMonthTxs.filter(t => t.type === 'income').reduce((a, t) => a + t.amount, 0);
+  const curExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((a, t) => a + Math.abs(t.amount), 0);
+  const prevIncome = prevMonthTxs.filter(t => t.type === 'income').reduce((a, t) => a + t.amount, 0);
+  const prevExpense = prevMonthTxs.filter(t => t.type === 'expense').reduce((a, t) => a + Math.abs(t.amount), 0);
+
+  const incomeDelta = prevIncome > 0 ? ((curIncome - prevIncome) / prevIncome) * 100 : null;
+  const expenseDelta = prevExpense > 0 ? ((curExpense - prevExpense) / prevExpense) * 100 : null;
 
   // Action Items
   const unreviewedCount = transactions.filter(t => !t.isReviewed).length;
   const uncategorizedCount = transactions.filter(t => t.categoryId === 'cat_uncategorized').length;
   const unmatchedTransfersCount = transactions.filter(t => t.type === 'transfer' && !t.isTransferMatched).length;
   const cashItemsNeedingReview = transactions.filter(t => t.cardId === cashWallet?.id && !t.isReviewed).length;
-  
+
   const needsAttention = unreviewedCount > 0 || uncategorizedCount > 0 || unmatchedTransfersCount > 0 || cashItemsNeedingReview > 0;
+
+  // Recurring patterns
+  const recurringPatterns = useMemo(() => detectRecurring(transactions).slice(0, 4), [transactions]);
+
+  // CC payment alerts
+  const ccAlerts = useMemo(() => {
+    const today = new Date();
+    return cards.filter(c => c.type === 'credit' && c.dueDate).map(card => {
+      const dueDay = card.dueDate!;
+      let dueDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+      if (today.getDate() > dueDay) dueDate.setMonth(dueDate.getMonth() + 1);
+      const daysToDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      const outstanding = Math.abs(transactions.filter(t => t.cardId === card.id).reduce((a, t) => a + t.amount, 0));
+      return { card, daysToDue, outstanding };
+    }).filter(a => a.daysToDue <= 7 && a.outstanding > 0);
+  }, [cards, transactions]);
+
+  const MoMBadge = ({ delta, higherIsBetter = true }: { delta: number | null; higherIsBetter?: boolean }) => {
+    if (delta === null || Math.abs(delta) < 1) return null;
+    const isPositive = delta > 0;
+    const isGood = higherIsBetter ? isPositive : !isPositive;
+    return (
+      <div className={`flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isGood ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
+        {isPositive ? <Icons.TrendingUp className="w-3 h-3" /> : <Icons.TrendingDown className="w-3 h-3" />}
+        {Math.abs(delta).toFixed(0)}% MoM
+      </div>
+    );
+  };
+
+  const freqLabel: Record<string, string> = { weekly: 'wk', monthly: 'mo', quarterly: 'qtr', annual: 'yr' };
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
@@ -62,32 +108,35 @@ export function Dashboard() {
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           <div className="bg-secondary/50 p-1 rounded-xl flex gap-1 mr-2 sm:mr-4 border border-border">
-            <button 
+            <button
               onClick={() => setViewMode("actual")}
+              data-testid="button-view-actual"
               className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-all ${viewMode === 'actual' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Actual Spend
             </button>
-            <button 
+            <button
               onClick={() => setViewMode("full")}
+              data-testid="button-view-full"
               className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-all ${viewMode === 'full' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Full Flow
             </button>
           </div>
-          
-          <button 
+          <button
             onClick={loadDemoData}
+            data-testid="button-demo-data"
             className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors text-sm font-medium"
           >
             Demo Data
           </button>
-          <button 
+          <button
             onClick={clearAllData}
+            data-testid="button-clear-data"
             className="px-4 py-2 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg hover:bg-destructive/20 transition-colors text-sm font-medium p-2"
             title="Clear Data"
           >
-            <Icons.Trash2 className="w-4 h-4"/>
+            <Icons.Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -96,55 +145,61 @@ export function Dashboard() {
         <div className="bg-primary/10 border border-primary/20 text-primary px-4 py-3 rounded-xl flex items-start gap-3 mb-6">
           <Icons.Info className="w-5 h-5 shrink-0 mt-0.5" />
           <p className="text-sm font-medium">
-            <strong>Actual Spend Mode:</strong> Internal transfers, credit card payments, and cash withdrawals are excluded from these totals to show your true net worth growth and real spending.
+            <strong>Actual Spend Mode:</strong> Internal transfers, credit card payments, and cash withdrawals are excluded to show your true spending and net worth.
           </p>
+        </div>
+      )}
+
+      {/* CC Due Alerts */}
+      {ccAlerts.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4">
+          <h3 className="font-bold text-red-400 flex items-center gap-2 mb-3">
+            <Icons.AlertTriangle className="w-5 h-5" />
+            Credit Card Due Soon
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {ccAlerts.map(({ card, daysToDue, outstanding }) => (
+              <div key={card.id} className="px-4 py-2 bg-background border border-red-500/30 rounded-xl text-sm font-medium">
+                <span className="text-red-400 font-bold">{card.name}</span>
+                <span className="text-muted-foreground ml-2">{formatCurrency(outstanding)} due in {daysToDue}d</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {needsAttention && (
         <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 mb-6">
-           <h3 className="font-bold text-orange-500 flex items-center gap-2 mb-3">
-             <Icons.AlertCircle className="w-5 h-5" />
-             Items Needing Attention
-           </h3>
-           <div className="flex flex-wrap gap-3">
-             {unreviewedCount > 0 && (
-               <button 
-                 onClick={() => navigateToLedger({ view: 'unreviewed' })}
-                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
-               >
-                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unreviewedCount}</span>
-                  Unreviewed Transactions
-               </button>
-             )}
-             {uncategorizedCount > 0 && (
-               <button 
-                 onClick={() => navigateToLedger({ category: 'cat_uncategorized' })}
-                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
-               >
-                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{uncategorizedCount}</span>
-                  Uncategorized
-               </button>
-             )}
-             {unmatchedTransfersCount > 0 && (
-               <button 
-                 onClick={() => navigateToLedger({ type: 'transfer' })}
-                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
-               >
-                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unmatchedTransfersCount}</span>
-                  Unmatched Transfers
-               </button>
-             )}
-             {cashItemsNeedingReview > 0 && (
-               <button 
-                 onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id, view: 'unreviewed' })}
-                 className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2"
-               >
-                  <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{cashItemsNeedingReview}</span>
-                  Cash to Review
-               </button>
-             )}
-           </div>
+          <h3 className="font-bold text-orange-500 flex items-center gap-2 mb-3">
+            <Icons.AlertCircle className="w-5 h-5" />
+            Items Needing Attention
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {unreviewedCount > 0 && (
+              <button onClick={() => navigateToLedger({ view: 'unreviewed' })} data-testid="button-unreviewed" className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2">
+                <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unreviewedCount}</span>
+                Unreviewed Transactions
+              </button>
+            )}
+            {uncategorizedCount > 0 && (
+              <button onClick={() => navigateToLedger({ category: 'cat_uncategorized' })} data-testid="button-uncategorized" className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2">
+                <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{uncategorizedCount}</span>
+                Uncategorized
+              </button>
+            )}
+            {unmatchedTransfersCount > 0 && (
+              <button onClick={() => navigateToLedger({ type: 'transfer' })} data-testid="button-unmatched-transfers" className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2">
+                <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{unmatchedTransfersCount}</span>
+                Unmatched Transfers
+              </button>
+            )}
+            {cashItemsNeedingReview > 0 && (
+              <button onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id, view: 'unreviewed' })} data-testid="button-cash-review" className="px-3 py-2 bg-background border border-orange-500/30 rounded-xl text-sm font-medium hover:bg-orange-500/10 transition-colors flex items-center gap-2">
+                <span className="bg-orange-500 text-white px-2 py-0.5 rounded-full text-xs">{cashItemsNeedingReview}</span>
+                Cash to Review
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -161,11 +216,8 @@ export function Dashboard() {
             {formatCurrency(totalBalance)}
           </div>
         </div>
-        
-        <div 
-          onClick={() => navigateToLedger({ type: 'income' })}
-          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-green-500/50 transition-colors cursor-pointer"
-        >
+
+        <div onClick={() => navigateToLedger({ type: 'income' })} className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-green-500/50 transition-colors cursor-pointer">
           <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Income' : 'Total Inflow'}</h3>
@@ -176,12 +228,12 @@ export function Dashboard() {
           <div className="text-3xl font-bold text-foreground font-mono mt-2 text-green-500">
             {formatCurrency(income)}
           </div>
+          <div className="mt-2">
+            <MoMBadge delta={incomeDelta} higherIsBetter={true} />
+          </div>
         </div>
 
-        <div 
-          onClick={() => navigateToLedger({ type: 'expense' })}
-          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-red-500/50 transition-colors cursor-pointer"
-        >
+        <div onClick={() => navigateToLedger({ type: 'expense' })} className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-red-500/50 transition-colors cursor-pointer">
           <div className="absolute inset-0 bg-gradient-to-br from-red-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">{viewMode === 'actual' ? 'Real Expenses' : 'Total Outflow'}</h3>
@@ -192,22 +244,22 @@ export function Dashboard() {
           <div className="text-3xl font-bold text-foreground font-mono mt-2 text-foreground">
             {formatCurrency(expenses)}
           </div>
+          <div className="mt-2">
+            <MoMBadge delta={expenseDelta} higherIsBetter={false} />
+          </div>
           <div className="flex gap-4 mt-4 pt-4 border-t border-border">
-             <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'personal' }); }} className="hover:opacity-70 transition-opacity">
-                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Personal</p>
-                <p className="font-mono font-bold text-sm">{formatCurrency(personalExpenses)}</p>
-             </div>
-             <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'business' }); }} className="hover:opacity-70 transition-opacity">
-                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Business</p>
-                <p className="font-mono font-bold text-sm">{formatCurrency(businessExpenses)}</p>
-             </div>
+            <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'personal' }); }} className="hover:opacity-70 transition-opacity">
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Personal</p>
+              <p className="font-mono font-bold text-sm">{formatCurrency(personalExpenses)}</p>
+            </div>
+            <div onClick={(e) => { e.stopPropagation(); navigateToLedger({ type: 'expense', tag: 'business' }); }} className="hover:opacity-70 transition-opacity">
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Business</p>
+              <p className="font-mono font-bold text-sm">{formatCurrency(businessExpenses)}</p>
+            </div>
           </div>
         </div>
 
-        <div 
-          onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id })}
-          className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors bg-gradient-to-br from-yellow-900/10 to-transparent cursor-pointer"
-        >
+        <div onClick={() => cashWallet && navigateToLedger({ card: cashWallet.id })} className="p-6 bg-card border border-border rounded-3xl shadow-xl relative overflow-hidden group hover:border-yellow-500/50 transition-colors bg-gradient-to-br from-yellow-900/10 to-transparent cursor-pointer">
           <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="flex flex-row items-center justify-between pb-2">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Cash Wallet</h3>
@@ -218,56 +270,86 @@ export function Dashboard() {
           <div className="text-3xl font-bold text-foreground font-mono mt-2">
             {formatCurrency(cashBalance)}
           </div>
-          {cashWallet && (
-            <p className="text-xs text-muted-foreground mt-1 font-medium">{cashWallet.name}</p>
-          )}
+          {cashWallet && <p className="text-xs text-muted-foreground mt-1 font-medium">{cashWallet.name}</p>}
         </div>
       </div>
-      
-      {/* Quick Actions & Recent Activity Mockup */}
+
       <div className="grid gap-6 md:grid-cols-3">
-         <div className="md:col-span-2 border border-border rounded-3xl bg-card p-6 shadow-lg">
-            <h3 className="font-bold text-lg mb-4">Recent Activity</h3>
-            <div className="space-y-4">
-               {transactions.slice(0, 5).map(tx => (
-                 <div key={tx.id} className="flex justify-between items-center py-2 border-b border-border/50 last:border-0">
-                    <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center">
-                          <Icons.Receipt className="w-5 h-5 text-muted-foreground"/>
-                       </div>
-                       <div>
-                          <p className="font-bold text-sm">{tx.description}</p>
-                          <p className="text-xs text-muted-foreground">{tx.date}</p>
-                       </div>
+        {/* Recent Activity */}
+        <div className="md:col-span-2 border border-border rounded-3xl bg-card p-6 shadow-lg">
+          <h3 className="font-bold text-lg mb-4">Recent Activity</h3>
+          <div className="space-y-4">
+            {transactions.slice(0, 5).map(tx => (
+              <div key={tx.id} className="flex justify-between items-center py-2 border-b border-border/50 last:border-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center">
+                    <Icons.Receipt className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">{tx.description}</p>
+                    <p className="text-xs text-muted-foreground">{tx.date}</p>
+                  </div>
+                </div>
+                <div className={`font-mono font-bold text-sm ${tx.amount > 0 ? 'text-green-500' : 'text-foreground'}`}>
+                  {tx.amount > 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                </div>
+              </div>
+            ))}
+            {transactions.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-8">No recent transactions. Go to Ledger to add some.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Recurring + Account spend */}
+        <div className="space-y-4">
+          {/* Recurring widget */}
+          {recurringPatterns.length > 0 && (
+            <div className="border border-border rounded-3xl bg-card p-5 shadow-lg">
+              <h3 className="font-bold mb-3 flex items-center gap-2 text-sm">
+                <Icons.RefreshCcw className="w-4 h-4 text-primary" />
+                Recurring Bills
+              </h3>
+              <div className="space-y-2">
+                {recurringPatterns.map(p => (
+                  <div key={p.key} className="flex items-center justify-between text-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate font-medium text-xs">{p.description}</p>
+                      {p.nextEstimate && <p className="text-[10px] text-muted-foreground">Next ~{p.nextEstimate}</p>}
                     </div>
-                    <div className={`font-mono font-bold text-sm ${tx.amount > 0 ? 'text-green-500' : 'text-foreground'}`}>
-                       {tx.amount > 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                    <div className="text-right ml-2">
+                      <p className="font-mono font-bold text-xs">{formatCurrency(p.avgAmount)}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize">{freqLabel[p.frequency]}</p>
                     </div>
-                 </div>
-               ))}
-               {transactions.length === 0 && (
-                 <p className="text-sm text-muted-foreground text-center py-8">No recent transactions. Go to Ledger to add some.</p>
-               )}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setLocation('/reports')} className="mt-3 text-xs text-primary font-bold hover:underline">See all →</button>
             </div>
-         </div>
-         
-         <div className="border border-border rounded-3xl bg-card p-6 shadow-lg flex flex-col items-center justify-center text-center">
-             <div className="w-16 h-16 rounded-2xl bg-primary/20 text-primary flex items-center justify-center mb-4">
-                 <Icons.CreditCard className="w-8 h-8" />
-             </div>
-             <h3 className="font-bold mb-2">Spend by Account</h3>
-             <div className="w-full space-y-2 mt-4 text-left">
-                {Object.entries(accountSpend).sort((a,b) => b[1] - a[1]).slice(0,3).map(([cardId, amount]) => {
-                   const c = cards.find(c => c.id === cardId);
-                   return (
-                     <div key={cardId} className="flex justify-between text-sm items-center">
-                        <span className="text-muted-foreground truncate pr-2">{c?.name || 'Unknown'}</span>
-                        <span className="font-mono font-bold">{formatCurrency(amount)}</span>
-                     </div>
-                   );
-                })}
-             </div>
-         </div>
+          )}
+
+          {/* Account spend */}
+          <div className="border border-border rounded-3xl bg-card p-5 shadow-lg">
+            <h3 className="font-bold mb-4 text-sm flex items-center gap-2">
+              <Icons.CreditCard className="w-4 h-4 text-primary" />
+              Spend by Account
+            </h3>
+            <div className="space-y-2">
+              {Object.entries(accountSpend).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([cardId, amount]) => {
+                const c = cards.find(c => c.id === cardId);
+                return (
+                  <div key={cardId} className="flex justify-between text-sm items-center">
+                    <span className="text-muted-foreground truncate pr-2 text-xs">{c?.name || 'Unknown'}</span>
+                    <span className="font-mono font-bold text-xs">{formatCurrency(amount)}</span>
+                  </div>
+                );
+              })}
+              {Object.keys(accountSpend).length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3">No spending data.</p>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

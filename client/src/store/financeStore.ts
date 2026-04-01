@@ -53,6 +53,7 @@ interface FinanceState {
   bulkDeleteTransactions: (ids: string[]) => Promise<void>;
   
   addCategorizationRule: (rule: Omit<CategorizationRule, 'id'>) => Promise<void>;
+  updateCategorizationRule: (id: string, updates: Partial<CategorizationRule>) => Promise<void>;
   deleteCategorizationRule: (id: string) => Promise<void>;
   learnFromTransaction: (description: string, categoryId: string, tag: string, type: 'expense' | 'income' | 'transfer') => Promise<void>;
 
@@ -83,6 +84,7 @@ export const useFinanceStore = create<FinanceState>()(
             tag: r.tag || 'none',
             type: r.type || undefined,
             isExactMatch: r.isExactMatch || false,
+            isEnabled: r.isEnabled !== false,
           }));
           set({
             transactions: data.transactions || [],
@@ -271,6 +273,11 @@ export const useFinanceStore = create<FinanceState>()(
         const newRule = { ...rule, id: `rule_custom_${uuidv4()}` };
         set(s => ({ categorizationRules: [...s.categorizationRules, newRule] }));
         try { await API('/api/rules', { method: 'POST', body: JSON.stringify(newRule) }); } catch {}
+      },
+
+      updateCategorizationRule: async (id, updates) => {
+        set(s => ({ categorizationRules: s.categorizationRules.map(r => r.id === id ? { ...r, ...updates } : r) }));
+        try { await API(`/api/rules/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }); } catch {}
       },
 
       deleteCategorizationRule: async (id) => {
