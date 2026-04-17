@@ -38,7 +38,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       tableName: "session",
       createTableIfMissing: true,
     }),
-    secret: process.env.SESSION_SECRET || "moneytrace-secret-key-2024",
+    secret: process.env.SESSION_SECRET || (() => { throw new Error("SESSION_SECRET environment variable is required"); })(),
     resave: false,
     saveUninitialized: false,
     cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 },
@@ -388,15 +388,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/transactions/:id", requireAuth, async (req, res) => {
     // Whitelist only known DB-level fields so that frontend-only properties
     // (e.g. isMalformed, optimistic flags) never reach Drizzle's set().
-    const ALLOWED: (keyof typeof req.body)[] = [
-      'date', 'description', 'originalDescription', 'amount', 'type',
-      'categoryId', 'cardId', 'tag', 'isTransferMatched', 'transferMatchId',
-      'transferType', 'parentId', 'isReviewed', 'notes', 'createdAt',
-    ];
-    const safe: Record<string, any> = {};
-    for (const key of ALLOWED) {
-      if (key in req.body) safe[key] = req.body[key];
-    }
+    const {
+      date, description, originalDescription, amount, type,
+      categoryId, cardId, tag, isTransferMatched, transferMatchId,
+      transferType, parentId, isReviewed, notes, createdAt,
+    } = req.body;
+    const safe = Object.fromEntries(
+      Object.entries({ date, description, originalDescription, amount, type, categoryId, cardId, tag, isTransferMatched, transferMatchId, transferType, parentId, isReviewed, notes, createdAt })
+        .filter(([, v]) => v !== undefined)
+    );
     const tx = await storage.updateTransaction((req.user as any).id, req.params.id, safe as any);
     if (!tx) return res.status(404).json({ message: "Transaction not found" });
     res.json(tx);
@@ -409,15 +409,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/transactions/bulk-update", requireAuth, async (req, res) => {
     const { ids, updates } = req.body;
-    const ALLOWED = [
-      'date', 'description', 'originalDescription', 'amount', 'type',
-      'categoryId', 'cardId', 'tag', 'isTransferMatched', 'transferMatchId',
-      'transferType', 'parentId', 'isReviewed', 'notes', 'createdAt',
-    ];
-    const safe: Record<string, any> = {};
-    for (const key of ALLOWED) {
-      if (updates && key in updates) safe[key] = updates[key];
-    }
+    const {
+      date, description, originalDescription, amount, type,
+      categoryId, cardId, tag, isTransferMatched, transferMatchId,
+      transferType, parentId, isReviewed, notes, createdAt,
+    } = updates ?? {};
+    const safe = Object.fromEntries(
+      Object.entries({ date, description, originalDescription, amount, type, categoryId, cardId, tag, isTransferMatched, transferMatchId, transferType, parentId, isReviewed, notes, createdAt })
+        .filter(([, v]) => v !== undefined)
+    );
     await storage.bulkUpdateTransactions((req.user as any).id, ids, safe as any);
     res.json({ message: "Updated" });
   });
